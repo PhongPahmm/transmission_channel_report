@@ -18,5 +18,10 @@ public class ExcelDTO {
     private List<Map<String, Object>> totalHandle;
     private List<Map<String, Object>> results;
     private List<Map<String, Object>> dailyStats;
-
+    private List<Map<String, Object>> complaintRate;
+    private List<Map<String, Object>> provinceSubscribers;
+    private List<Map<String, Object>> handleRate3h;
+    private List<Map<String, Object>> handleRate24h;
+    private List<Map<String, Object>> handleRate48h;
+    private List<Map<String, Object>> handleRate3hVip;
 }

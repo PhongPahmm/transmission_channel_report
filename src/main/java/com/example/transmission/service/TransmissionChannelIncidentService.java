@@ -2,6 +2,7 @@ package com.example.transmission.service;
 
 import com.example.transmission.domain.ServiceSubscriber;
 import com.example.transmission.dto.ExcelDTO;
+import com.example.transmission.repository.ProvinceSubscriberRepository;
 import com.example.transmission.repository.ServiceSubscriberRepository;
 import com.example.transmission.repository.TransmissionChannelIncidentRepository;
 import lombok.RequiredArgsConstructor;
@@ -24,6 +25,7 @@ public class TransmissionChannelIncidentService {
 
     private final TransmissionChannelIncidentRepository transmissionChannelIncidentRepository;
     private final ServiceSubscriberRepository serviceSubscriberRepository;
+    private final ProvinceSubscriberRepository provinceSubscriberRepository;
 
     // Constants for Excel structure
     private static final String TEMPLATE_PATH = "/templates/template_output.xlsx";
@@ -53,6 +55,36 @@ public class TransmissionChannelIncidentService {
     private static final int TABLE3_END_ROW = 37;   // B38 = row 37 (0-based)
     private static final int TABLE3_DATA_START_COL = 4; // Column E = index 4
 
+    // Table 4 constants (Complaint Rate by Province)
+    private static final int TABLE4_START_ROW = 44; // B45 = row 44 (0-based)
+    private static final int TABLE4_END_ROW = 77;   // B78 = row 77 (0-based)
+    private static final int TABLE4_DATA_START_COL = 6; // Column G = index 6
+    private static final int TABLE4_TOTAL_ROW = 43;
+
+    // Table 5 constants (Handle Rate by Province)
+    private static final int TABLE5_START_ROW = 84; // B85 = row 84 (0-based)
+    private static final int TABLE5_END_ROW = 117;  // B118 = row 117 (0-based)
+    private static final int TABLE5_DATA_START_COL = 7; // Column H = index 7 (da_xu_li_3h)
+    private static final int TABLE5_TOTAL_ROW = 83;     // Row 84 = row 83 (0-based)
+
+    // Table 6 constants (Handle Rate by Province)
+    private static final int TABLE6_START_ROW = 124;
+    private static final int TABLE6_END_ROW = 157;
+    private static final int TABLE6_DATA_START_COL = 7;
+    private static final int TABLE6_TOTAL_ROW = 123;
+
+    // Table 7 constants (Handle Rate by Province)
+    private static final int TABLE7_START_ROW = 164;
+    private static final int TABLE7_END_ROW = 197;
+    private static final int TABLE7_DATA_START_COL = 7;
+    private static final int TABLE7_TOTAL_ROW = 163;
+
+    // Table 8 constants (Handle Rate by Province)
+    private static final int TABLE8_START_ROW = 204;
+    private static final int TABLE8_END_ROW = 237;
+    private static final int TABLE8_DATA_START_COL = 7;
+    private static final int TABLE8_TOTAL_ROW = 203;
+
     public byte[] exportExcelFile() {
         try (InputStream inputStream = getClass().getResourceAsStream(TEMPLATE_PATH);
              XSSFWorkbook workbook = new XSSFWorkbook(inputStream);
@@ -66,7 +98,12 @@ public class TransmissionChannelIncidentService {
             // Fill tables
             fillTable1(sheet, excelData);
             fillTable2(sheet, excelData);
-            fillTable3(sheet, excelData); // Add Table 3 processing
+            fillTable3(sheet, excelData);
+            fillTable4(sheet, excelData);
+            fillTable5(sheet, excelData);
+            fillTable6(sheet, excelData);
+            fillTable7(sheet, excelData);
+            fillTable8(sheet, excelData);
 
             workbook.setForceFormulaRecalculation(true);
             workbook.write(out);
@@ -88,6 +125,12 @@ public class TransmissionChannelIncidentService {
                 .totalHandle(transmissionChannelIncidentRepository.getTotalHandle())
                 .results(transmissionChannelIncidentRepository.getResult())
                 .dailyStats(transmissionChannelIncidentRepository.getDailyStats())
+                .complaintRate(transmissionChannelIncidentRepository.getComplaintRateAndTotalSubscribers())
+                .provinceSubscribers(provinceSubscriberRepository.getProvinceSubscribers())
+                .handleRate3h(transmissionChannelIncidentRepository.getHandleRate3h())
+                .handleRate24h(transmissionChannelIncidentRepository.getHandleRate24h())
+                .handleRate48h(transmissionChannelIncidentRepository.getHandleRate48h())
+                .handleRate3hVip(transmissionChannelIncidentRepository.getHandleRate3hVip())
                 .build();
     }
 
@@ -150,6 +193,25 @@ public class TransmissionChannelIncidentService {
 
     private void fillTable3(Sheet sheet, ExcelDTO data) {
         fillDailyStats(sheet, data.getDailyStats());
+    }
+
+    private void fillTable4(Sheet sheet, ExcelDTO data) {
+        fillComplaintRateAndSubscribersByProvince(sheet, data.getComplaintRate(), data.getProvinceSubscribers());
+    }
+
+    private void fillTable5(Sheet sheet, ExcelDTO data) {
+        fillHandleRate3hByProvince(sheet, data.getHandleRate3h());
+    }
+    private void fillTable6(Sheet sheet, ExcelDTO data) {
+        fillHandleRate24hByProvince(sheet, data.getHandleRate24h());
+    }
+
+    private void fillTable7(Sheet sheet, ExcelDTO data) {
+        fillHandleRate48hByProvince(sheet, data.getHandleRate48h());
+    }
+
+    private void fillTable8(Sheet sheet, ExcelDTO data) {
+        fillHandleRate3hVipByProvince(sheet, data.getHandleRate3hVip());
     }
 
     private void fillProgressKpiData(Sheet sheet, List<Map<String, Object>> progressKpi) {
@@ -257,6 +319,527 @@ public class TransmissionChannelIncidentService {
         }
     }
 
+    private void fillComplaintRateAndSubscribersByProvince(Sheet sheet, List<Map<String, Object>> complaintData,
+                                                           List<Map<String, Object>> provinceSubscribers) {
+        if (provinceSubscribers == null || provinceSubscribers.isEmpty()) return;
+
+        int currentDay = java.time.LocalDate.now().getDayOfMonth();
+
+        // Create optimized maps once
+        Map<String, List<Map<String, Object>>> dataByProvince = complaintData != null ?
+                complaintData.stream().collect(Collectors.groupingBy(
+                        data -> data.get("tinh") != null ? data.get("tinh").toString().trim() : "Unknown"
+                )) : Map.of();
+
+        Map<String, Double> provinceSubscriberMap = provinceSubscribers.stream()
+                .collect(Collectors.toMap(
+                        data -> data.get("province_name") != null ? data.get("province_name").toString().trim() : "Unknown",
+                        data -> {
+                            Object sltbObj = data.get("total_subscribers");
+                            return (sltbObj instanceof Number) ? ((Number) sltbObj).doubleValue() : 0.0;
+                        }
+                ));
+
+        // Fill sltb to column E for all province rows
+        for (int provinceRow = TABLE4_START_ROW; provinceRow <= TABLE4_END_ROW; provinceRow++) {
+            String provinceName = getCellStringValue(sheet, provinceRow, CATEGORY_COL);
+            if (provinceName == null) continue;
+
+            Double subscriberCount = provinceSubscriberMap.entrySet().stream()
+                    .filter(entry -> {
+                        String lowerKey = entry.getKey().toLowerCase();
+                        String lowerName = provinceName.toLowerCase();
+                        return lowerKey.contains(lowerName) || lowerName.contains(lowerKey);
+                    })
+                    .map(Map.Entry::getValue)
+                    .findFirst()
+                    .orElse(0.0);
+
+            setCellValue(sheet, provinceRow, 4, subscriberCount); // Column E
+        }
+
+        // Fill total sltb to column E for TOTAL row
+        Double totalSltb = provinceSubscriberMap.getOrDefault("TỔNG", 0.0);
+        setCellValue(sheet, TABLE4_TOTAL_ROW, 4, totalSltb);
+
+        // Process province rows with optimized logic
+        for (int provinceRow = TABLE4_START_ROW; provinceRow <= TABLE4_END_ROW; provinceRow++) {
+            String provinceName = getCellStringValue(sheet, provinceRow, CATEGORY_COL);
+            if (provinceName == null) continue;
+
+            // Find subscriber count (already calculated above, but need to recalculate for consistency)
+            Double subscriberCount = provinceSubscriberMap.entrySet().stream()
+                    .filter(entry -> {
+                        String lowerKey = entry.getKey().toLowerCase();
+                        String lowerName = provinceName.toLowerCase();
+                        return lowerKey.contains(lowerName) || lowerName.contains(lowerKey);
+                    })
+                    .map(Map.Entry::getValue)
+                    .findFirst()
+                    .orElse(0.0);
+
+            // Initialize default values for past days only
+            for (int day = 1; day <= currentDay; day++) {
+                int colIndex = TABLE4_DATA_START_COL + (day - 1) * 3;
+                setCellValue(sheet, provinceRow, colIndex, 0.0); // slpa
+                setCellValue(sheet, provinceRow, colIndex + 1, subscriberCount); // sltb
+                setCellValue(sheet, provinceRow, colIndex + 2, 0.0); // tlpa
+            }
+
+            // Fill actual complaint data if available
+            Optional<String> matchingKey = dataByProvince.keySet().stream()
+                    .filter(key -> {
+                        String lowerKey = key.toLowerCase();
+                        String lowerName = provinceName.toLowerCase();
+                        return lowerKey.contains(lowerName) || lowerName.contains(lowerKey);
+                    })
+                    .findFirst();
+
+            if (matchingKey.isPresent()) {
+                List<Map<String, Object>> provinceData = dataByProvince.get(matchingKey.get());
+                int finalProvinceRow = provinceRow;
+                provinceData.forEach(data -> {
+                    Object receivedDateObj = data.get("received_date");
+                    Object slpaObj = data.get("slpa");
+                    Object tlpaObj = data.get("tlpa");
+
+                    if (receivedDateObj != null && slpaObj instanceof Number) {
+                        int day = extractDayFromDate(receivedDateObj);
+                        if (day > 0 && day <= 31) {
+                            int colIndex = TABLE4_DATA_START_COL + (day - 1) * 3;
+                            setCellValue(sheet, finalProvinceRow, colIndex, ((Number) slpaObj).doubleValue());
+                            if (tlpaObj instanceof Number) {
+                                setCellValue(sheet, finalProvinceRow, colIndex + 2, ((Number) tlpaObj).doubleValue());
+                            }
+                        }
+                    }
+                });
+                log.debug("Filled complaint rate data for province: {} with {} records", provinceName, provinceData.size());
+            }
+        }
+
+        // Handle TOTAL row
+        List<Map<String, Object>> totalData = dataByProvince.get("TỔNG");
+
+        // Initialize TOTAL row with default values for past days
+        for (int day = 1; day <= currentDay; day++) {
+            int colIndex = TABLE4_DATA_START_COL + (day - 1) * 3;
+            setCellValue(sheet, TABLE4_TOTAL_ROW, colIndex, 0.0); // slpa
+            setCellValue(sheet, TABLE4_TOTAL_ROW, colIndex + 1, totalSltb); // sltb
+            setCellValue(sheet, TABLE4_TOTAL_ROW, colIndex + 2, 0.0); // tlpa
+        }
+
+        // Fill actual TOTAL data if available
+        if (totalData != null && !totalData.isEmpty()) {
+            totalData.forEach(data -> {
+                int day = extractDayFromDate(data.get("received_date"));
+                if (day > 0 && day <= 31) {
+                    int colIndex = TABLE4_DATA_START_COL + (day - 1) * 3;
+
+                    Object slpa = data.get("slpa");
+                    Object sltb = data.get("sltb");
+                    Object tlpa = data.get("tlpa");
+
+                    if (slpa instanceof Number) {
+                        setCellValue(sheet, TABLE4_TOTAL_ROW, colIndex, ((Number) slpa).doubleValue());
+                    }
+                    Double sltbValue = (sltb instanceof Number) ? ((Number) sltb).doubleValue() : totalSltb;
+                    setCellValue(sheet, TABLE4_TOTAL_ROW, colIndex + 1, sltbValue);
+                    if (tlpa instanceof Number) {
+                        setCellValue(sheet, TABLE4_TOTAL_ROW, colIndex + 2, ((Number) tlpa).doubleValue());
+                    }
+                }
+            });
+        }
+    }
+    private void fillHandleRate3hByProvince(Sheet sheet, List<Map<String, Object>> handleRateData) {
+        if (handleRateData == null) handleRateData = List.of();
+
+        int currentDay = java.time.LocalDate.now().getDayOfMonth();
+
+        // Create optimized map once - group data by province
+        Map<String, List<Map<String, Object>>> dataByProvince = handleRateData.stream()
+                .collect(Collectors.groupingBy(
+                        d -> d.get("tinh") != null ? d.get("tinh").toString().trim() : "unknown"
+                ));
+
+        // Process province rows with optimized logic
+        for (int provinceRow = TABLE5_START_ROW; provinceRow <= TABLE5_END_ROW; provinceRow++) {
+            String provinceName = getCellStringValue(sheet, provinceRow, CATEGORY_COL);
+            if (provinceName == null) continue;
+
+            // Initialize default values for past days, null for future days
+            for (int day = 1; day <= 31; day++) {
+                int colIndex = TABLE5_DATA_START_COL + (day - 1) * 3;
+                if (day <= currentDay) {
+                    setCellValue(sheet, provinceRow, colIndex, 0.0);     // da_xu_ly_3h
+                    setCellValue(sheet, provinceRow, colIndex + 1, 0.0); // tong_sc_da_xu_ly
+                    setCellValue(sheet, provinceRow, colIndex + 2, 0.0); // ty_le_3h
+                } else {
+                    setCellValue(sheet, provinceRow, colIndex, null);
+                    setCellValue(sheet, provinceRow, colIndex + 1, null);
+                    setCellValue(sheet, provinceRow, colIndex + 2, null);
+                }
+            }
+
+            // Fill actual handle rate data if available
+            Optional<String> matchingKey = dataByProvince.keySet().stream()
+                    .filter(key -> {
+                        String lowerKey = key.toLowerCase();
+                        String lowerName = provinceName.toLowerCase();
+                        return lowerKey.contains(lowerName) || lowerName.contains(lowerKey);
+                    })
+                    .findFirst();
+
+            if (matchingKey.isPresent()) {
+                List<Map<String, Object>> provinceData = dataByProvince.get(matchingKey.get());
+                int finalProvinceRow = provinceRow;
+                provinceData.forEach(data -> {
+                    int day = extractDayFromDate(data.get("ngay"));
+                    if (day > 0 && day <= 31) {
+                        int colIndex = TABLE5_DATA_START_COL + (day - 1) * 3;
+                        setCellValue(sheet, finalProvinceRow, colIndex, getNumberValue(data, "da_xu_ly_3h"));
+                        setCellValue(sheet, finalProvinceRow, colIndex + 1, getNumberValue(data, "tong_sc_da_xu_ly"));
+                        Double tyLe = getNumberValue(data, "ty_le_3h");
+                        if (tyLe != null) {
+                            setCellValue(sheet, finalProvinceRow, colIndex + 2, tyLe / 100);
+                        }
+                    }
+                });
+                log.debug("Filled handle rate data for province: {} with {} records", provinceName, provinceData.size());
+            }
+        }
+
+        // Handle TOTAL row
+        fillHandleRateTotalRow(sheet, dataByProvince, currentDay);
+    }
+
+    private void fillHandleRateTotalRow(Sheet sheet, Map<String, List<Map<String, Object>>> dataByProvince, int currentDay) {
+        List<Map<String, Object>> totalData = dataByProvince.get("TỔNG");
+
+        // Initialize TOTAL row with default values for past days, null for future days
+        for (int day = 1; day <= 31; day++) {
+            int colIndex = TABLE5_DATA_START_COL + (day - 1) * 3;
+            if (day <= currentDay) {
+                setCellValue(sheet, TABLE5_TOTAL_ROW, colIndex, 0.0);     // da_xu_ly_3h
+                setCellValue(sheet, TABLE5_TOTAL_ROW, colIndex + 1, 0.0); // tong_sc_da_xu_ly
+                setCellValue(sheet, TABLE5_TOTAL_ROW, colIndex + 2, 0.0); // ty_le_3h
+            } else {
+                setCellValue(sheet, TABLE5_TOTAL_ROW, colIndex, null);
+                setCellValue(sheet, TABLE5_TOTAL_ROW, colIndex + 1, null);
+                setCellValue(sheet, TABLE5_TOTAL_ROW, colIndex + 2, null);
+            }
+        }
+
+        // Fill actual TOTAL data if available
+        if (totalData != null && !totalData.isEmpty()) {
+            totalData.forEach(data -> {
+                int day = extractDayFromDate(data.get("ngay"));
+                if (day > 0 && day <= 31) {
+                    int colIndex = TABLE5_DATA_START_COL + (day - 1) * 3;
+                    setCellValue(sheet, TABLE5_TOTAL_ROW, colIndex, getNumberValue(data, "da_xu_ly_3h"));
+                    setCellValue(sheet, TABLE5_TOTAL_ROW, colIndex + 1, getNumberValue(data, "tong_sc_da_xu_ly"));
+                    Double tyLe = getNumberValue(data, "ty_le_3h");
+                    if (tyLe != null) {
+                        setCellValue(sheet, TABLE5_TOTAL_ROW, colIndex + 2, tyLe / 100);
+                    }
+                }
+            });
+            log.debug("Filled handle rate total data with {} records", totalData.size());
+        }
+    }
+
+    private void fillHandleRate24hByProvince(Sheet sheet, List<Map<String, Object>> handleRateData) {
+        if (handleRateData == null) handleRateData = List.of();
+
+        int currentDay = java.time.LocalDate.now().getDayOfMonth();
+
+        // Create optimized map once - group data by province
+        Map<String, List<Map<String, Object>>> dataByProvince = handleRateData.stream()
+                .collect(Collectors.groupingBy(
+                        d -> d.get("tinh") != null ? d.get("tinh").toString().trim() : "unknown"
+                ));
+
+        // Process province rows with optimized logic
+        for (int provinceRow = TABLE6_START_ROW; provinceRow <= TABLE6_END_ROW; provinceRow++) {
+            String provinceName = getCellStringValue(sheet, provinceRow, CATEGORY_COL);
+            if (provinceName == null) continue;
+
+            // Initialize default values for past days, null for future days
+            for (int day = 1; day <= 31; day++) {
+                int colIndex = TABLE6_DATA_START_COL + (day - 1) * 3;
+                if (day <= currentDay) {
+                    setCellValue(sheet, provinceRow, colIndex, 0.0);     // da_xu_ly_24h
+                    setCellValue(sheet, provinceRow, colIndex + 1, 0.0); // tong_sc_da_xu_ly
+                    setCellValue(sheet, provinceRow, colIndex + 2, 0.0); // ty_le_24h
+                } else {
+                    setCellValue(sheet, provinceRow, colIndex, null);
+                    setCellValue(sheet, provinceRow, colIndex + 1, null);
+                    setCellValue(sheet, provinceRow, colIndex + 2, null);
+                }
+            }
+
+            // Fill actual handle rate data if available
+            Optional<String> matchingKey = dataByProvince.keySet().stream()
+                    .filter(key -> {
+                        String lowerKey = key.toLowerCase();
+                        String lowerName = provinceName.toLowerCase();
+                        return lowerKey.contains(lowerName) || lowerName.contains(lowerKey);
+                    })
+                    .findFirst();
+
+            if (matchingKey.isPresent()) {
+                List<Map<String, Object>> provinceData = dataByProvince.get(matchingKey.get());
+                int finalProvinceRow = provinceRow;
+                provinceData.forEach(data -> {
+                    int day = extractDayFromDate(data.get("ngay"));
+                    if (day > 0 && day <= 31) {
+                        int colIndex = TABLE6_DATA_START_COL + (day - 1) * 3;
+                        setCellValue(sheet, finalProvinceRow, colIndex, getNumberValue(data, "da_xu_ly_24h"));
+                        setCellValue(sheet, finalProvinceRow, colIndex + 1, getNumberValue(data, "tong_sc_da_xu_ly"));
+                        Double tyLe = getNumberValue(data, "ty_le_24h");
+                        if (tyLe != null) {
+                            setCellValue(sheet, finalProvinceRow, colIndex + 2, tyLe / 100);
+                        }
+                    }
+                });
+                log.debug("Filled 24h handle rate data for province: {} with {} records", provinceName, provinceData.size());
+            }
+        }
+
+        // Handle TOTAL row
+        fillHandleRate24hTotalRow(sheet, dataByProvince, currentDay);
+    }
+
+    private void fillHandleRate24hTotalRow(Sheet sheet, Map<String, List<Map<String, Object>>> dataByProvince, int currentDay) {
+        List<Map<String, Object>> totalData = dataByProvince.get("TỔNG");
+
+        // Initialize TOTAL row with default values for past days, null for future days
+        for (int day = 1; day <= 31; day++) {
+            int colIndex = TABLE6_DATA_START_COL + (day - 1) * 3;
+            if (day <= currentDay) {
+                setCellValue(sheet, TABLE6_TOTAL_ROW, colIndex, 0.0);     // da_xu_ly_24h
+                setCellValue(sheet, TABLE6_TOTAL_ROW, colIndex + 1, 0.0); // tong_sc_da_xu_ly
+                setCellValue(sheet, TABLE6_TOTAL_ROW, colIndex + 2, 0.0); // ty_le_24h
+            } else {
+                setCellValue(sheet, TABLE6_TOTAL_ROW, colIndex, null);
+                setCellValue(sheet, TABLE6_TOTAL_ROW, colIndex + 1, null);
+                setCellValue(sheet, TABLE6_TOTAL_ROW, colIndex + 2, null);
+            }
+        }
+
+        // Fill actual TOTAL data if available
+        if (totalData != null && !totalData.isEmpty()) {
+            totalData.forEach(data -> {
+                int day = extractDayFromDate(data.get("ngay"));
+                if (day > 0 && day <= 31) {
+                    int colIndex = TABLE6_DATA_START_COL + (day - 1) * 3;
+                    setCellValue(sheet, TABLE6_TOTAL_ROW, colIndex, getNumberValue(data, "da_xu_ly_24h"));
+                    setCellValue(sheet, TABLE6_TOTAL_ROW, colIndex + 1, getNumberValue(data, "tong_sc_da_xu_ly"));
+                    Double tyLe = getNumberValue(data, "ty_le_24h");
+                    if (tyLe != null) {
+                        setCellValue(sheet, TABLE6_TOTAL_ROW, colIndex + 2, tyLe / 100);
+                    }
+                }
+            });
+            log.debug("Filled 24h handle rate total data with {} records", totalData.size());
+        }
+    }
+
+    private void fillHandleRate48hByProvince(Sheet sheet, List<Map<String, Object>> handleRateData) {
+        if (handleRateData == null) handleRateData = List.of();
+
+        int currentDay = java.time.LocalDate.now().getDayOfMonth();
+
+        // Create optimized map once - group data by province
+        Map<String, List<Map<String, Object>>> dataByProvince = handleRateData.stream()
+                .collect(Collectors.groupingBy(
+                        d -> d.get("tinh") != null ? d.get("tinh").toString().trim() : "unknown"
+                ));
+
+        // Process province rows with optimized logic
+        for (int provinceRow = TABLE7_START_ROW; provinceRow <= TABLE7_END_ROW; provinceRow++) {
+            String provinceName = getCellStringValue(sheet, provinceRow, CATEGORY_COL);
+            if (provinceName == null) continue;
+
+            // Initialize default values for past days, null for future days
+            for (int day = 1; day <= 31; day++) {
+                int colIndex = TABLE7_DATA_START_COL + (day - 1) * 3;
+                if (day <= currentDay) {
+                    setCellValue(sheet, provinceRow, colIndex, 0.0);     // da_xu_ly_48h
+                    setCellValue(sheet, provinceRow, colIndex + 1, 0.0); // tong_sc_da_xu_ly
+                    setCellValue(sheet, provinceRow, colIndex + 2, 0.0); // ty_le_48h
+                } else {
+                    setCellValue(sheet, provinceRow, colIndex, null);
+                    setCellValue(sheet, provinceRow, colIndex + 1, null);
+                    setCellValue(sheet, provinceRow, colIndex + 2, null);
+                }
+            }
+
+            // Fill actual handle rate data if available
+            Optional<String> matchingKey = dataByProvince.keySet().stream()
+                    .filter(key -> {
+                        String lowerKey = key.toLowerCase();
+                        String lowerName = provinceName.toLowerCase();
+                        return lowerKey.contains(lowerName) || lowerName.contains(lowerKey);
+                    })
+                    .findFirst();
+
+            if (matchingKey.isPresent()) {
+                List<Map<String, Object>> provinceData = dataByProvince.get(matchingKey.get());
+                int finalProvinceRow = provinceRow;
+                provinceData.forEach(data -> {
+                    int day = extractDayFromDate(data.get("ngay"));
+                    if (day > 0 && day <= 31) {
+                        int colIndex = TABLE7_DATA_START_COL + (day - 1) * 3;
+                        setCellValue(sheet, finalProvinceRow, colIndex, getNumberValue(data, "da_xu_ly_48h"));
+                        setCellValue(sheet, finalProvinceRow, colIndex + 1, getNumberValue(data, "tong_sc_da_xu_ly"));
+                        Double tyLe = getNumberValue(data, "ty_le_48h");
+                        if (tyLe != null) {
+                            setCellValue(sheet, finalProvinceRow, colIndex + 2, tyLe / 100);
+                        }
+                    }
+                });
+                log.debug("Filled 48h handle rate data for province: {} with {} records", provinceName, provinceData.size());
+            }
+        }
+
+        // Handle TOTAL row
+        fillHandleRate48hTotalRow(sheet, dataByProvince, currentDay);
+    }
+
+    private void fillHandleRate48hTotalRow(Sheet sheet, Map<String, List<Map<String, Object>>> dataByProvince, int currentDay) {
+        List<Map<String, Object>> totalData = dataByProvince.get("TỔNG");
+
+        // Initialize TOTAL row with default values for past days, null for future days
+        for (int day = 1; day <= 31; day++) {
+            int colIndex = TABLE7_DATA_START_COL + (day - 1) * 3;
+            if (day <= currentDay) {
+                setCellValue(sheet, TABLE7_TOTAL_ROW, colIndex, 0.0);     // da_xu_ly_48h
+                setCellValue(sheet, TABLE7_TOTAL_ROW, colIndex + 1, 0.0); // tong_sc_da_xu_ly
+                setCellValue(sheet, TABLE7_TOTAL_ROW, colIndex + 2, 0.0); // ty_le_48h
+            } else {
+                setCellValue(sheet, TABLE7_TOTAL_ROW, colIndex, null);
+                setCellValue(sheet, TABLE7_TOTAL_ROW, colIndex + 1, null);
+                setCellValue(sheet, TABLE7_TOTAL_ROW, colIndex + 2, null);
+            }
+        }
+
+        // Fill actual TOTAL data if available
+        if (totalData != null && !totalData.isEmpty()) {
+            totalData.forEach(data -> {
+                int day = extractDayFromDate(data.get("ngay"));
+                if (day > 0 && day <= 31) {
+                    int colIndex = TABLE7_DATA_START_COL + (day - 1) * 3;
+                    setCellValue(sheet, TABLE7_TOTAL_ROW, colIndex, getNumberValue(data, "da_xu_ly_48h"));
+                    setCellValue(sheet, TABLE7_TOTAL_ROW, colIndex + 1, getNumberValue(data, "tong_sc_da_xu_ly"));
+                    Double tyLe = getNumberValue(data, "ty_le_48h");
+                    if (tyLe != null) {
+                        setCellValue(sheet, TABLE7_TOTAL_ROW, colIndex + 2, tyLe / 100);
+                    }
+                }
+            });
+            log.debug("Filled 48h handle rate total data with {} records", totalData.size());
+        }
+    }
+
+    private void fillHandleRate3hVipByProvince(Sheet sheet, List<Map<String, Object>> handleRateData) {
+        if (handleRateData == null) handleRateData = List.of();
+
+        int currentDay = java.time.LocalDate.now().getDayOfMonth();
+
+        // Create optimized map once - group data by province
+        Map<String, List<Map<String, Object>>> dataByProvince = handleRateData.stream()
+                .collect(Collectors.groupingBy(
+                        d -> d.get("tinh") != null ? d.get("tinh").toString().trim() : "unknown"
+                ));
+
+        // Process province rows with optimized logic
+        for (int provinceRow = TABLE8_START_ROW; provinceRow <= TABLE8_END_ROW; provinceRow++) {
+            String provinceName = getCellStringValue(sheet, provinceRow, CATEGORY_COL);
+            if (provinceName == null) continue;
+
+            // Initialize default values for past days, null for future days
+            for (int day = 1; day <= 31; day++) {
+                int colIndex = TABLE8_DATA_START_COL + (day - 1) * 3;
+                if (day <= currentDay) {
+                    setCellValue(sheet, provinceRow, colIndex, 0.0);     // da_xu_ly_3h_vip
+                    setCellValue(sheet, provinceRow, colIndex + 1, 0.0); // tong_sc_da_xu_ly_vip
+                    setCellValue(sheet, provinceRow, colIndex + 2, 0.0); // ty_le_3h_vip
+                } else {
+                    setCellValue(sheet, provinceRow, colIndex, null);
+                    setCellValue(sheet, provinceRow, colIndex + 1, null);
+                    setCellValue(sheet, provinceRow, colIndex + 2, null);
+                }
+            }
+
+            // Fill actual handle rate data if available
+            Optional<String> matchingKey = dataByProvince.keySet().stream()
+                    .filter(key -> {
+                        String lowerKey = key.toLowerCase();
+                        String lowerName = provinceName.toLowerCase();
+                        return lowerKey.contains(lowerName) || lowerName.contains(lowerKey);
+                    })
+                    .findFirst();
+
+            if (matchingKey.isPresent()) {
+                List<Map<String, Object>> provinceData = dataByProvince.get(matchingKey.get());
+                int finalProvinceRow = provinceRow;
+                provinceData.forEach(data -> {
+                    int day = extractDayFromDate(data.get("ngay"));
+                    if (day > 0 && day <= 31) {
+                        int colIndex = TABLE8_DATA_START_COL + (day - 1) * 3;
+                        setCellValue(sheet, finalProvinceRow, colIndex, getNumberValue(data, "da_xu_ly_3h_vip"));
+                        setCellValue(sheet, finalProvinceRow, colIndex + 1, getNumberValue(data, "tong_sc_da_xu_ly_vip"));
+                        Double tyLe = getNumberValue(data, "ty_le_3h_vip");
+                        if (tyLe != null) {
+                            setCellValue(sheet, finalProvinceRow, colIndex + 2, tyLe / 100);
+                        }
+                    }
+                });
+                log.debug("Filled 3h VIP handle rate data for province: {} with {} records", provinceName, provinceData.size());
+            }
+        }
+
+        // Handle TOTAL row
+        fillHandleRate3hVipTotalRow(sheet, dataByProvince, currentDay);
+    }
+
+    private void fillHandleRate3hVipTotalRow(Sheet sheet, Map<String, List<Map<String, Object>>> dataByProvince, int currentDay) {
+        List<Map<String, Object>> totalData = dataByProvince.get("TỔNG");
+
+        // Initialize TOTAL row with default values for past days, null for future days
+        for (int day = 1; day <= 31; day++) {
+            int colIndex = TABLE8_DATA_START_COL + (day - 1) * 3;
+            if (day <= currentDay) {
+                setCellValue(sheet, TABLE8_TOTAL_ROW, colIndex, 0.0);     // da_xu_ly_3h_vip
+                setCellValue(sheet, TABLE8_TOTAL_ROW, colIndex + 1, 0.0); // tong_sc_da_xu_ly_vip
+                setCellValue(sheet, TABLE8_TOTAL_ROW, colIndex + 2, 0.0); // ty_le_3h_vip
+            } else {
+                setCellValue(sheet, TABLE8_TOTAL_ROW, colIndex, null);
+                setCellValue(sheet, TABLE8_TOTAL_ROW, colIndex + 1, null);
+                setCellValue(sheet, TABLE8_TOTAL_ROW, colIndex + 2, null);
+            }
+        }
+
+        // Fill actual TOTAL data if available
+        if (totalData != null && !totalData.isEmpty()) {
+            totalData.forEach(data -> {
+                int day = extractDayFromDate(data.get("ngay"));
+                if (day > 0 && day <= 31) {
+                    int colIndex = TABLE8_DATA_START_COL + (day - 1) * 3;
+                    setCellValue(sheet, TABLE8_TOTAL_ROW, colIndex, getNumberValue(data, "da_xu_ly_3h_vip"));
+                    setCellValue(sheet, TABLE8_TOTAL_ROW, colIndex + 1, getNumberValue(data, "tong_sc_da_xu_ly_vip"));
+                    Double tyLe = getNumberValue(data, "ty_le_3h_vip");
+                    if (tyLe != null) {
+                        setCellValue(sheet, TABLE8_TOTAL_ROW, colIndex + 2, tyLe / 100);
+                    }
+                }
+            });
+            log.debug("Filled 3h VIP handle rate total data with {} records", totalData.size());
+        }
+    }
+
     private int extractDayFromDate(Object dateObj) {
         try {
             if (dateObj instanceof java.sql.Date) {
@@ -312,15 +895,17 @@ public class TransmissionChannelIncidentService {
     }
 
     private void setCellValue(Sheet sheet, int rowIndex, int colIndex, Number value) {
-        if (value == null) return;
-
         Row row = sheet.getRow(rowIndex);
         if (row == null) row = sheet.createRow(rowIndex);
 
         Cell cell = row.getCell(colIndex);
         if (cell == null) cell = row.createCell(colIndex);
 
-        cell.setCellValue(value.doubleValue());
+        if (value == null) {
+            cell.setBlank();
+        } else {
+            cell.setCellValue(value.doubleValue());
+        }
     }
 
     private Double getNumberValue(Map<String, Object> data, String key) {

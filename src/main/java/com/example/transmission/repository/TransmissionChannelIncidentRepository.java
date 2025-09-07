@@ -194,5 +194,247 @@ public interface TransmissionChannelIncidentRepository extends JpaRepository<Tra
             nativeQuery = true)
     List<Map<String, Object>> getDailyStats();
 
+    @Query(value =
+            "WITH total_sltb AS ( " +
+                    "    SELECT SUM(DISTINCT total_subscribers) AS total_sltb " +
+                    "    FROM rp_province_subscribers " +
+                    ") " +
+                    "SELECT  " +
+                    "    i.received_date, " +
+                    "    i.new_province AS tinh, " +
+                    "    COUNT(*) AS slpa, " +
+                    "    s.total_subscribers AS sltb, " +
+                    "    ROUND(COUNT(*) * 1000.0 / s.total_subscribers, 2) AS tlpa " +
+                    "FROM rp_transmission_channel_incidents i " +
+                    "JOIN rp_province_subscribers s " +
+                    "      ON i.new_province = s.province_name " +
+                    "WHERE i.received_date BETWEEN DATE_FORMAT(CURDATE(), '%Y-%m-01') " +
+                    "                          AND CURDATE() - INTERVAL 1 DAY " +
+                    "  AND i.complaint_group = '05. Báo hỏng DV Kênh truyền' " +
+                    "  AND COALESCE(i.satisfaction_level, '') NOT IN ( " +
+                    "        'Không Happy call KH – Đóng hủy KN theo yêu cầu CC', " +
+                    "        'Không Happy call KH – Đóng trùng.' " +
+                    "      ) " +
+                    "  AND LOWER(i.category) LIKE '%sự cố%' " +
+                    "  AND i.new_province IS NOT NULL " +
+                    "  AND i.new_province != '' " +
+                    "GROUP BY i.received_date, i.new_province, s.total_subscribers " +
+                    "UNION ALL " +
+                    "SELECT  " +
+                    "    i.received_date, " +
+                    "    'TỔNG' AS tinh, " +
+                    "    COUNT(*) AS slpa, " +
+                    "    (SELECT total_sltb FROM total_sltb) AS sltb, " +
+                    "    ROUND(COUNT(*) * 1000.0 / (SELECT total_sltb FROM total_sltb), 2) AS tlpa " +
+                    "FROM rp_transmission_channel_incidents i " +
+                    "JOIN rp_province_subscribers s " +
+                    "      ON i.new_province = s.province_name " +
+                    "WHERE i.received_date BETWEEN DATE_FORMAT(CURDATE(), '%Y-%m-01') " +
+                    "                          AND CURDATE() - INTERVAL 1 DAY " +
+                    "  AND i.complaint_group = '05. Báo hỏng DV Kênh truyền' " +
+                    "  AND COALESCE(i.satisfaction_level, '') NOT IN ( " +
+                    "        'Không Happy call KH – Đóng hủy KN theo yêu cầu CC', " +
+                    "        'Không Happy call KH – Đóng trùng.' " +
+                    "      ) " +
+                    "  AND LOWER(i.category) LIKE '%sự cố%' " +
+                    "  AND i.new_province IS NOT NULL " +
+                    "  AND i.new_province != '' " +
+                    "GROUP BY i.received_date;",
+            nativeQuery = true)
+    List<Map<String, Object>> getComplaintRateAndTotalSubscribers();
 
+    @Query(value =
+            "WITH data AS ( " +
+                    "    SELECT " +
+                    "        received_date AS ngay, " +
+                    "        new_province AS tinh, " +
+                    "        COUNT(*) AS tong_sc_da_xu_ly, " +
+                    "        SUM( " +
+                    "            CASE " +
+                    "                WHEN ( " +
+                    "                    (complaint_type = 'Sự cố Kênh truyền quốc tế' " +
+                    "                     AND COALESCE(gnoc_processing_hours, total_processing_hours) <= 5) " +
+                    "                    OR " +
+                    "                    (COALESCE(gnoc_processing_hours, total_processing_hours) <= 3) " +
+                    "                ) " +
+                    "                THEN 1 ELSE 0 " +
+                    "            END " +
+                    "        ) AS da_xu_ly_3h " +
+                    "    FROM rp_transmission_channel_incidents " +
+                    "    WHERE " +
+                    "        received_date BETWEEN DATE_FORMAT(CURDATE(), '%Y-%m-01')" +
+                    "                 AND CURDATE() - INTERVAL 1 DAY " +
+                    "        AND complaint_group = '05. Báo hỏng DV Kênh truyền' " +
+                    "        AND satisfaction_level NOT IN ( " +
+                    "            'Không Happy call KH – Đóng hủy KN theo yêu cầu CC', " +
+                    "            'Không Happy call KH – Đóng trùng.' " +
+                    "        ) " +
+                    "        AND category LIKE '%sự cố%' " +
+                    "    GROUP BY received_date, new_province " +
+                    ") " +
+                    "SELECT " +
+                    "    ngay, " +
+                    "    tinh, " +
+                    "    tong_sc_da_xu_ly, " +
+                    "    da_xu_ly_3h, " +
+                    "    ROUND(da_xu_ly_3h * 100.0 / tong_sc_da_xu_ly, 2) AS ty_le_3h " +
+                    "FROM data " +
+                    "UNION ALL " +
+                    "SELECT " +
+                    "    ngay, " +
+                    "    'TỔNG' AS tinh, " +
+                    "    SUM(tong_sc_da_xu_ly), " +
+                    "    SUM(da_xu_ly_3h), " +
+                    "    ROUND(SUM(da_xu_ly_3h) * 100.0 / SUM(tong_sc_da_xu_ly), 2) " +
+                    "FROM data " +
+                    "GROUP BY ngay", nativeQuery = true)
+    List<Map<String, Object>> getHandleRate3h();
+
+    @Query(value = "WITH base AS ( " +
+            "    SELECT " +
+            "        received_date, " +
+            "        new_province, " +
+            "        COALESCE(gnoc_processing_hours, total_processing_hours) AS processing_hours " +
+            "    FROM rp_transmission_channel_incidents " +
+            "    WHERE " +
+            "        received_date BETWEEN DATE_FORMAT(CURDATE(), '%Y-%m-01')" +
+            "                 AND CURDATE() - INTERVAL 1 DAY " +
+            "        AND complaint_group = '05. Báo hỏng DV Kênh truyền' " +
+            "        AND satisfaction_level NOT IN ( " +
+            "            'Không Happy call KH – Đóng hủy KN theo yêu cầu CC', " +
+            "            'Không Happy call KH – Đóng trùng.' " +
+            "        ) " +
+            "        AND category LIKE '%sự cố%' " +
+            "), " +
+            "data AS ( " +
+            "    SELECT " +
+            "        received_date AS ngay, " +
+            "        new_province AS tinh, " +
+            "        COUNT(*) AS tong_sc_da_xu_ly, " +
+            "        SUM(CASE WHEN processing_hours <= 24 THEN 1 ELSE 0 END) AS da_xu_ly_24h " +
+            "    FROM base " +
+            "    GROUP BY received_date, new_province " +
+            "    UNION ALL " +
+            "    SELECT " +
+            "        received_date AS ngay, " +
+            "        'TỔNG' AS tinh, " +
+            "        COUNT(*) AS tong_sc_da_xu_ly, " +
+            "        SUM(CASE WHEN processing_hours <= 24 THEN 1 ELSE 0 END) AS da_xu_ly_24h " +
+            "    FROM base " +
+            "    GROUP BY received_date " +
+            ") " +
+            "SELECT " +
+            "    ngay, " +
+            "    tinh, " +
+            "    tong_sc_da_xu_ly, " +
+            "    da_xu_ly_24h, " +
+            "    ROUND(da_xu_ly_24h * 100.0 / tong_sc_da_xu_ly, 2) AS ty_le_24h " +
+            "FROM data " +
+            "ORDER BY ngay, tinh", nativeQuery = true)
+    List<Map<String, Object>> getHandleRate24h();
+
+    @Query(value =
+            "WITH base AS ( " +
+                    "    SELECT " +
+                    "        received_date, " +
+                    "        new_province, " +
+                    "        COALESCE(gnoc_processing_hours, total_processing_hours) AS processing_hours " +
+                    "    FROM rp_transmission_channel_incidents " +
+                    "    WHERE " +
+                    "        received_date BETWEEN DATE_FORMAT(CURDATE(), '%Y-%m-01')" +
+                    "                 AND CURDATE() - INTERVAL 1 DAY " +
+                    "        AND complaint_group = '05. Báo hỏng DV Kênh truyền' " +
+                    "        AND satisfaction_level NOT IN ( " +
+                    "            'Không Happy call KH – Đóng hủy KN theo yêu cầu CC', " +
+                    "            'Không Happy call KH – Đóng trùng.' " +
+                    "        ) " +
+                    "        AND category LIKE '%sự cố%' " +
+                    "), " +
+                    "data AS ( " +
+                    "    SELECT " +
+                    "        received_date AS ngay, " +
+                    "        new_province AS tinh, " +
+                    "        COUNT(*) AS tong_sc_da_xu_ly, " +
+                    "        SUM(CASE WHEN processing_hours <= 48 THEN 1 ELSE 0 END) AS da_xu_ly_48h " +
+                    "    FROM base " +
+                    "    GROUP BY received_date, new_province " +
+                    "    UNION ALL " +
+                    "    SELECT " +
+                    "        received_date AS ngay, " +
+                    "        'TỔNG' AS tinh, " +
+                    "        COUNT(*) AS tong_sc_da_xu_ly, " +
+                    "        SUM(CASE WHEN processing_hours <= 48 THEN 1 ELSE 0 END) AS da_xu_ly_48h " +
+                    "    FROM base " +
+                    "    GROUP BY received_date " +
+                    ") " +
+                    "SELECT " +
+                    "    ngay, " +
+                    "    tinh, " +
+                    "    tong_sc_da_xu_ly, " +
+                    "    da_xu_ly_48h, " +
+                    "    ROUND(da_xu_ly_48h * 100.0 / tong_sc_da_xu_ly, 2) AS ty_le_48h " +
+                    "FROM data " +
+                    "ORDER BY ngay, tinh", nativeQuery = true)
+    List<Map<String, Object>> getHandleRate48h();
+
+    @Query(value =
+            "WITH base AS ( " +
+                    "    SELECT " +
+                    "        received_date, " +
+                    "        new_province, " +
+                    "        COALESCE(gnoc_processing_hours, total_processing_hours) AS processing_hours, " +
+                    "        complaint_type, " +
+                    "        critical_channel " +
+                    "    FROM rp_transmission_channel_incidents " +
+                    "    WHERE " +
+                    "        received_date BETWEEN DATE_FORMAT(CURDATE(), '%Y-%m-01')" +
+                    "                 AND CURDATE() - INTERVAL 1 DAY " +
+                    "        AND complaint_group = '05. Báo hỏng DV Kênh truyền' " +
+                    "        AND satisfaction_level NOT IN ( " +
+                    "            'Không Happy call KH – Đóng hủy KN theo yêu cầu CC', " +
+                    "            'Không Happy call KH – Đóng trùng.' " +
+                    "        ) " +
+                    "        AND category LIKE '%sự cố%' " +
+                    "        AND critical_channel IN ('Trọng yếu 1', 'Trọng yếu 2') " +
+                    "), " +
+                    "data AS ( " +
+                    "    SELECT " +
+                    "        received_date AS ngay, " +
+                    "        new_province AS tinh, " +
+                    "        COUNT(*) AS tong_sc_da_xu_ly, " +
+                    "        SUM( " +
+                    "            CASE " +
+                    "                WHEN ( " +
+                    "                    (complaint_type LIKE '%kênh truyền quốc tế%' AND processing_hours <= 5) " +
+                    "                    OR (processing_hours <= 3) " +
+                    "                ) THEN 1 ELSE 0 " +
+                    "            END " +
+                    "        ) AS da_xu_ly_3h_vip " +
+                    "    FROM base " +
+                    "    GROUP BY received_date, new_province " +
+                    "    UNION ALL " +
+                    "    SELECT " +
+                    "        received_date AS ngay, " +
+                    "        'TỔNG' AS tinh, " +
+                    "        COUNT(*) AS tong_sc_da_xu_ly, " +
+                    "        SUM( " +
+                    "            CASE " +
+                    "                WHEN ( " +
+                    "                    (complaint_type LIKE '%kênh truyền quốc tế%' AND processing_hours <= 5) " +
+                    "                    OR (processing_hours <= 3) " +
+                    "                ) THEN 1 ELSE 0 " +
+                    "            END " +
+                    "        ) AS da_xu_ly_3h_vip " +
+                    "    FROM base " +
+                    "    GROUP BY received_date " +
+                    ") " +
+                    "SELECT " +
+                    "    ngay, " +
+                    "    tinh, " +
+                    "    tong_sc_da_xu_ly, " +
+                    "    da_xu_ly_3h_vip, " +
+                    "    ROUND(da_xu_ly_3h_vip * 100.0 / tong_sc_da_xu_ly, 2) AS ty_le_3h_vip " +
+                    "FROM data " +
+                    "ORDER BY ngay, tinh", nativeQuery = true)
+    List<Map<String, Object>> getHandleRate3hVip();
 }
