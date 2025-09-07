@@ -5,12 +5,17 @@ import com.example.transmission.dto.ExcelDTO;
 import com.example.transmission.repository.ProvinceSubscriberRepository;
 import com.example.transmission.repository.ServiceSubscriberRepository;
 import com.example.transmission.repository.TransmissionChannelIncidentRepository;
+import com.spire.xls.Workbook;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.xssf.usermodel.XSSFSheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.stereotype.Service;
+import com.spire.xls.*;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
 import java.io.*;
 import java.math.BigDecimal;
 import java.util.List;
@@ -29,7 +34,9 @@ public class TransmissionChannelIncidentService {
 
     // Constants for Excel structure
     private static final String TEMPLATE_PATH = "/templates/template_output.xlsx";
+    private static final String TEMPLATE_PATH_INPUT = "/templates/template_input.xlsx";
     private static final String SHEET_NAME = "PL06-Kenh truyen";
+    private static final String SHEET_NAME_IN = "Phụ lục BC ngay";
     private static final String TOTAL = "TỔNG";
     private static final String TOTAL_PROCESSED_CATEGORY = "TỔNG PHẢN ÁNH ĐÃ XỬ LÝ";
 
@@ -105,13 +112,20 @@ public class TransmissionChannelIncidentService {
             fillTable7(sheet, excelData);
             fillTable8(sheet, excelData);
 
+            String inputChartPath = extractResourceToTemp(TEMPLATE_PATH_INPUT);
+            BufferedImage chartImage = exportChartToImage(inputChartPath, SHEET_NAME_IN);
+            insertChartImage(workbook, SHEET_NAME, chartImage);
+
             workbook.setForceFormulaRecalculation(true);
+
             workbook.write(out);
             return out.toByteArray();
 
         } catch (IOException e) {
             log.error("Error while exporting Excel", e);
             throw new RuntimeException("Error while exporting Excel", e);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
         }
     }
 
@@ -202,6 +216,7 @@ public class TransmissionChannelIncidentService {
     private void fillTable5(Sheet sheet, ExcelDTO data) {
         fillHandleRate3hByProvince(sheet, data.getHandleRate3h());
     }
+
     private void fillTable6(Sheet sheet, ExcelDTO data) {
         fillHandleRate24hByProvince(sheet, data.getHandleRate24h());
     }
@@ -452,6 +467,7 @@ public class TransmissionChannelIncidentService {
             });
         }
     }
+
     private void fillHandleRate3hByProvince(Sheet sheet, List<Map<String, Object>> handleRateData) {
         if (handleRateData == null) handleRateData = List.of();
 
@@ -911,5 +927,54 @@ public class TransmissionChannelIncidentService {
     private Double getNumberValue(Map<String, Object> data, String key) {
         Object value = data.get(key);
         return value instanceof Number ? ((Number) value).doubleValue() : null;
+    }
+
+    public BufferedImage exportChartToImage(String inputPath, String sheetName) throws Exception {
+        Workbook wbInput = new Workbook();
+        wbInput.loadFromFile(inputPath);
+        Worksheet sheetInput = wbInput.getWorksheets().get(sheetName);
+
+        Chart chart = null;
+        for (int i = 0; i < sheetInput.getCharts().size(); i++) {
+            Chart c = sheetInput.getCharts().get(i);
+            // Ví dụ tìm chart trong vùng F10:Q25
+            if (c.getLeftColumn() >= 6 && c.getRightColumn() <= 17
+                    && c.getTopRow() >= 10 && c.getBottomRow() <= 25) {
+                chart = c;
+                break;
+            }
+        }
+        if (chart == null) throw new RuntimeException("Không tìm thấy chart trong block F10:Q25");
+
+        return chart.saveToImage();
+    }
+
+    public void insertChartImage(XSSFWorkbook workbook, String sheetName, BufferedImage chartImage) throws Exception {
+        XSSFSheet sheet = workbook.getSheet(sheetName);
+        if (sheet == null) throw new RuntimeException("Không tìm thấy sheet " + sheetName);
+
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        ImageIO.write(chartImage, "png", baos);
+        int pictureIdx = workbook.addPicture(baos.toByteArray(), org.apache.poi.ss.usermodel.Workbook.PICTURE_TYPE_PNG);
+
+        CreationHelper helper = workbook.getCreationHelper();
+        Drawing<?> drawing = sheet.createDrawingPatriarch();
+        ClientAnchor anchor = helper.createClientAnchor();
+        anchor.setCol1(12); // M
+        anchor.setRow1(13); // 14
+
+        drawing.createPicture(anchor, pictureIdx).resize();
+    }
+
+    private String extractResourceToTemp(String resourcePath) throws Exception {
+        try (var in = getClass().getResourceAsStream(resourcePath)) {
+            if (in == null) throw new RuntimeException("Không tìm thấy resource: " + resourcePath);
+            var tempFile = java.io.File.createTempFile("excel_template_", ".xlsx");
+            tempFile.deleteOnExit();
+            try (var out = new java.io.FileOutputStream(tempFile)) {
+                in.transferTo(out);
+            }
+            return tempFile.getAbsolutePath();
+        }
     }
 }
