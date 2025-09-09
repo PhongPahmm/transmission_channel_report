@@ -6,6 +6,5 @@ import org.springframework.stereotype.Repository;
 
 @Repository
 public interface MonthlyIncidentSummaryRepository extends JpaRepository<MonthlyIncidentSummary, Long> {
-    
 
 }

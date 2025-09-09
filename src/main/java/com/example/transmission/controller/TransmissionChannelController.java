@@ -16,8 +16,7 @@ public class TransmissionChannelController {
     TransmissionChannelIncidentService transmissionChannelIncidentService;
     @GetMapping("/transmission-updated")
     public ResponseEntity<byte[]> downloadTransmissionUpdated() {
-        byte[] fileBytes = transmissionChannelIncidentService.exportExcelFile()
-                ;
+        byte[] fileBytes = transmissionChannelIncidentService.exportExcelFile();
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION,
                         "attachment; filename=transmission_updated.xlsx")

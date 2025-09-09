@@ -24,4 +24,6 @@ public class ExcelDTO {
     private List<Map<String, Object>> handleRate24h;
     private List<Map<String, Object>> handleRate48h;
     private List<Map<String, Object>> handleRate3hVip;
+    private List<Map<String, Object>> satisfactionLevel;
+    private List<Map<String, Object>> avgTimeHandle;
 }

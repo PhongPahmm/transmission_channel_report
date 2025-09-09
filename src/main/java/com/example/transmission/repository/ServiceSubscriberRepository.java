@@ -15,7 +15,9 @@ public interface ServiceSubscriberRepository extends JpaRepository<ServiceSubscr
             "SELECT " +
                     "complaint_group_progress_kpi_3h AS progress_3h, " +
                     "complaint_group_progress_kpi_24h AS progress_24h, " +
-                    "complaint_group_progress_kpi_48h AS progress_48h " +
+                    "complaint_group_progress_kpi_48h AS progress_48h, " +
+                    "complaint_group_progress_kpi_3hVip AS progress_3hVip, " +
+                    "complaint_group_satisfy_level_kpi AS satisfyLevel " +
                     "FROM rp_service_subscribers " +
                     "LIMIT 1",
             nativeQuery = true)
