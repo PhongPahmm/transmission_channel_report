@@ -20,6 +20,7 @@ import java.io.*;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -1370,7 +1371,7 @@ public class TransmissionChannelIncidentService {
             return;
         }
 
-        int currentDay = java.time.LocalDate.now().getDayOfMonth();
+        int currentDay = LocalDate.now().getDayOfMonth();
 
         // Get KPI progress data
         List<Map<String, Object>> progressKpi = data.getProgressKpi();
@@ -1435,47 +1436,45 @@ public class TransmissionChannelIncidentService {
 
     private void fillSheet2ActualDataRow(Sheet sheet, int rowIndex, List<Map<String, Object>> handleRateData,
                                          String dataKey, int currentDay, String dataType) {
-        if (handleRateData == null || handleRateData.isEmpty()) {
-            log.warn("Handle rate data is null or empty for {}, skipping row {}", dataType, rowIndex + 1);
-            return;
-        }
+        if (sheet == null) return;
 
-        // Group data by province, focusing on TOTAL data for Sheet2
-        Map<String, List<Map<String, Object>>> dataByProvince = handleRateData.stream()
-                .collect(Collectors.groupingBy(
-                        d -> d.get("tinh") != null ? d.get("tinh").toString().trim() : "unknown"
-                ));
+        Row row = sheet.getRow(rowIndex);
+        if (row == null) row = sheet.createRow(rowIndex);
 
-        List<Map<String, Object>> totalData = dataByProvince.get(TOTAL);
+        Map<String, List<Map<String, Object>>> dataByProvince = handleRateData != null
+                ? handleRateData.stream().collect(Collectors.groupingBy(
+                d -> d.get("tinh") != null ? d.get("tinh").toString().trim() : "unknown"
+        ))
+                : Map.of();
 
-        // Initialize all days with 0 for past days, null for future days
-        for (int day = 1; day <= 35; day++) {
-            int colIndex = SHEET2_DATA_START_COL + 1 + (day - 1); // C=2, D=3, ..., AK=36
+        List<Map<String, Object>> totalData = dataByProvince.getOrDefault(TOTAL, List.of());
 
-            if (day <= currentDay) {
-                setCellValue(sheet, rowIndex, colIndex, 0.0);
-            } else {
-                setCellValue(sheet, rowIndex, colIndex, null);
+        Map<Integer, Double> valueByDay = new HashMap<>();
+        for (Map<String, Object> data : totalData) {
+            int day = extractDayFromDate(data.get("ngay"));
+            Double value = getNumberValue(data, dataKey);
+            if (day > 0 && day <= 35) {
+                valueByDay.put(day, value);
             }
         }
 
-        // Fill actual data if available
-        if (totalData != null && !totalData.isEmpty()) {
-            totalData.forEach(data -> {
-                int day = extractDayFromDate(data.get("ngay"));
-                if (day > 0 && day <= 35 && day <= currentDay) {
-                    int colIndex = SHEET2_DATA_START_COL+1 + (day - 1);
-                    Double value = getNumberValue(data, dataKey);
-                    if (value != null) {
-                        setCellValue(sheet, rowIndex, colIndex, value);
-                    }
-                }
-            });
-            log.debug("Filled {} row {} with {} records", dataType, rowIndex + 1, totalData.size());
-        } else {
-            log.debug("No TOTAL data found for {}, using default values", dataType);
+        for (int day = 1; day <= 35; day++) {
+            int colIndex = SHEET2_DATA_START_COL + 1 + (day - 1); // C=2, D=3, ..., AK=36
+
+            Cell cell = row.getCell(colIndex);
+            if (cell == null) cell = row.createCell(colIndex);
+
+            if (day <= currentDay) {
+                Double value = valueByDay.get(day);
+                cell.setCellValue(value != null ? value : 0.0);
+            } else {
+                cell.setBlank();
+            }
         }
+
+        log.debug("Filled {} row {} with {} records", dataType, rowIndex + 1, totalData.size());
     }
+
     private void fillSatisfactionLevel(Sheet sheet, ExcelDTO excelData) {
         List<Map<String, Object>> satisfactionData = excelData.getSatisfactionLevel();
         if (satisfactionData == null) satisfactionData = List.of();
@@ -1559,37 +1558,49 @@ public class TransmissionChannelIncidentService {
                         r -> r
                 ));
 
-        LocalDate firstDayPrevMonth = LocalDate.now().minusMonths(1).withDayOfMonth(1);
+        LocalDate today = LocalDate.now();
+        LocalDate firstDayPrevMonth = today.minusMonths(1).withDayOfMonth(1);
         int daysInMonth = firstDayPrevMonth.lengthOfMonth();
+
+        int currentDay = today.getDayOfMonth();
 
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
         for (int day = 1; day <= daysInMonth; day++) {
             int colIndex = startCol + (day - 1);
 
-            String dateStr = firstDayPrevMonth.withDayOfMonth(day).format(formatter);
-            Map<String, Object> record = dataByDate.get(dateStr);
+            if (day <= currentDay) {
+                String dateStr = firstDayPrevMonth.withDayOfMonth(day).format(formatter);
+                Map<String, Object> record = dataByDate.get(dateStr);
 
-            double totalHours = 0;
-            double totalCount = 0;
+                double totalHours = 0;
+                double totalCount = 0;
 
-            if (record != null) {
-                Object hoursObj = record.get("Tổng thời gian xử lý (giờ)");
-                Object countObj = record.get("Số lượng phản ánh");
+                if (record != null) {
+                    Object hoursObj = record.get("Tổng thời gian xử lý (giờ)");
+                    Object countObj = record.get("Số lượng phản ánh");
 
-                if (hoursObj instanceof Number) totalHours = ((Number) hoursObj).doubleValue();
-                if (countObj instanceof Number) totalCount = ((Number) countObj).doubleValue();
+                    if (hoursObj instanceof Number) totalHours = ((Number) hoursObj).doubleValue();
+                    if (countObj instanceof Number) totalCount = ((Number) countObj).doubleValue();
+                }
+
+                // Fill total processing hours
+                Cell totalHoursCell = totalTimeRow.getCell(colIndex);
+                if (totalHoursCell == null) totalHoursCell = totalTimeRow.createCell(colIndex);
+                totalHoursCell.setCellValue(totalHours);
+
+                // Fill total count
+                Cell totalCountCell = totalCountRow.getCell(colIndex);
+                if (totalCountCell == null) totalCountCell = totalCountRow.createCell(colIndex);
+                totalCountCell.setCellValue(totalCount);
+            } else {
+                // Clear cell nếu ngày > ngày hiện tại
+                Cell totalHoursCell = totalTimeRow.getCell(colIndex);
+                if (totalHoursCell != null) totalHoursCell.setBlank();
+
+                Cell totalCountCell = totalCountRow.getCell(colIndex);
+                if (totalCountCell != null) totalCountCell.setBlank();
             }
-
-            // Fill total processing hours
-            Cell totalHoursCell = totalTimeRow.getCell(colIndex);
-            if (totalHoursCell == null) totalHoursCell = totalTimeRow.createCell(colIndex);
-            totalHoursCell.setCellValue(totalHours);
-
-            // Fill total count
-            Cell totalCountCell = totalCountRow.getCell(colIndex);
-            if (totalCountCell == null) totalCountCell = totalCountRow.createCell(colIndex);
-            totalCountCell.setCellValue(totalCount);
         }
     }
 
