@@ -1,48 +1,30 @@
 package com.example.transmission.service;
 
-import com.example.transmission.domain.ServiceSubscriber;
-import com.example.transmission.dto.ExcelDTO;
-import com.example.transmission.repository.ProvinceSubscriberRepository;
-import com.example.transmission.repository.ServiceSubscriberRepository;
+import com.example.transmission.dto.TransmissionChanelDTO;
 import com.example.transmission.repository.TransmissionChannelIncidentRepository;
-import com.spire.xls.Workbook;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.poi.ss.usermodel.*;
-import org.apache.poi.xssf.usermodel.XSSFSheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.stereotype.Service;
-import com.spire.xls.*;
 
-import javax.imageio.ImageIO;
-import java.awt.image.BufferedImage;
 import java.io.*;
-import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class TransmissionChannelIncidentService {
+public class TransmissionChannelIncidentService  {
 
     private final TransmissionChannelIncidentRepository transmissionChannelIncidentRepository;
-    private final ServiceSubscriberRepository serviceSubscriberRepository;
-    private final ProvinceSubscriberRepository provinceSubscriberRepository;
 
     // Constants for Excel structure
     private static final String TEMPLATE_PATH = "/templates/template_output.xlsx";
-    private static final String TEMPLATE_PATH_INPUT = "/templates/template_input.xlsx";
     private static final String SHEET_NAME = "PL06-Kenh truyen";
     private static final String SHEET_NAME_2 = "KPI VTS";
-    private static final String SHEET_NAME_IN = "Phụ lục BC ngay";
-    private static final String TOTAL = "TỔNG";
-    private static final String TOTAL_PROCESSED_CATEGORY = "TỔNG PHẢN ÁNH ĐÃ XỬ LÝ";
 
     // Table 1 constants
     private static final int TABLE1_START_ROW = 7;
@@ -62,9 +44,14 @@ public class TransmissionChannelIncidentService {
     private static final int RESULT_COL = 22; // Column W
 
     // Table 3 constants (Daily Stats)
-    private static final int TABLE3_START_ROW = 32; // B34 = row 33 (0-based)
-    private static final int TABLE3_END_ROW = 37;   // B38 = row 37 (0-based)
+    private static final int TABLE3_SC_ROW = 32;        // Row 33 (label: Sự cố)
+    private static final int TABLE3_START_ROW = 33;     // Row 34 (Office WAN)
+    private static final int TABLE3_END_ROW = 36;       // Row 37 (Kênh truyền quốc tế)
+    private static final int TABLE3_HT_ROW = 37;        // Row 38 (label: HT)
     private static final int TABLE3_DATA_START_COL = 4; // Column E = index 4
+    private static final int TABLE3_AVG_COL = 3;
+    private static final int TABLE3_TOTAL_ROW = 31;
+
 
     // Table 4 constants (Complaint Rate by Province)
     private static final int TABLE4_START_ROW = 44; // B45 = row 44 (0-based)
@@ -115,603 +102,674 @@ public class TransmissionChannelIncidentService {
     private static final int SHEET2_24H_TONG_SC_ROW = SHEET2_24H_DA_XU_LI_ROW + 1;
     private static final int SHEET2_48H_DA_XU_LI_ROW = 18;
     private static final int SHEET2_48H_TONG_SC_ROW = SHEET2_48H_DA_XU_LI_ROW + 1;
-    public byte[] exportExcelFile() {
-        try (InputStream inputStream = getClass().getResourceAsStream(TEMPLATE_PATH);
-             XSSFWorkbook workbook = new XSSFWorkbook(inputStream);
-             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
 
-            Sheet sheet = workbook.getSheet(SHEET_NAME);
-            Sheet sheet2 = workbook.getSheet(SHEET_NAME_2);
+    public byte[] exportExcelFile(LocalDate currentDate) {
+        try (InputStream inputStream = getClass().getResourceAsStream(TEMPLATE_PATH)) {
+            assert inputStream != null;
+            try (XSSFWorkbook workbook = new XSSFWorkbook(inputStream);
+                 ByteArrayOutputStream out = new ByteArrayOutputStream()) {
 
-            // Get all required data
-            ExcelDTO excelData = fetchExcelData();
+                Sheet sheet = workbook.getSheet(SHEET_NAME);
+                Sheet sheet2 = workbook.getSheet(SHEET_NAME_2);
 
-            // Fill tables
-            fillTable1(sheet, excelData);
-            fillTable2(sheet, excelData);
-            fillTable3(sheet, excelData);
-            fillTable4(sheet, excelData);
-            fillTable5(sheet, excelData);
-            fillTable6(sheet, excelData);
-            fillTable7(sheet, excelData);
-            fillTable8(sheet, excelData);
-            fillSheet2KpiData(sheet2, excelData);
-            fillSatisfactionLevel(sheet2, excelData);
-            fillAvgHandleTime(sheet2, excelData);
+                // Get all required data
+                TransmissionChanelDTO excelData = fetchExcelData(currentDate);
 
-            String inputChartPath = extractResourceToTemp(TEMPLATE_PATH_INPUT);
-            BufferedImage chartImage = exportChartToImage(inputChartPath, SHEET_NAME_IN);
-            insertChartImage(workbook, SHEET_NAME, chartImage);
+                // Fill tables
+                fillTable1(sheet, excelData, currentDate);
+                fillTable2(sheet, excelData, currentDate);
+                fillTable3(sheet, excelData, currentDate);
+                fillTable4(sheet, excelData, currentDate);
+                fillTable5(sheet, excelData, currentDate);
+                fillTable6(sheet, excelData, currentDate);
+                fillTable7(sheet, excelData, currentDate);
+                fillTable8(sheet, excelData, currentDate);
+                fillSheet2KpiData(sheet2, excelData, currentDate);
+                fillSatisfactionLevel(sheet2, excelData, currentDate);
+                fillAvgHandleTime(sheet2, excelData, currentDate);
+                fillMonthlySummaryData(sheet, excelData, currentDate);
 
-            workbook.setForceFormulaRecalculation(true);
+                workbook.setForceFormulaRecalculation(true);
 
-            workbook.write(out);
-            return out.toByteArray();
+                workbook.write(out);
+                return out.toByteArray();
 
+            }
         } catch (IOException e) {
             log.error("Error while exporting Excel", e);
             throw new RuntimeException("Error while exporting Excel", e);
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            log.error("Unexpected error while exporting Excel", e);
+            throw new RuntimeException("lỗi ", e);
         }
     }
 
-    private ExcelDTO fetchExcelData() {
-        return ExcelDTO.builder()
-                .categorySummaryResults(transmissionChannelIncidentRepository.getCategorySummary())
-                .complaintDayResults(transmissionChannelIncidentRepository.getComplaintDay())
-                .serviceSubscribers(serviceSubscriberRepository.findAll())
-                .onTimeHandle(transmissionChannelIncidentRepository.getOnTimeHandle())
-                .progressKpi(serviceSubscriberRepository.getProgressKpi())
-                .totalHandle(transmissionChannelIncidentRepository.getTotalHandle())
-                .results(transmissionChannelIncidentRepository.getResult())
-                .dailyStats(transmissionChannelIncidentRepository.getDailyStats())
-                .complaintRate(transmissionChannelIncidentRepository.getComplaintRateAndTotalSubscribers())
-                .provinceSubscribers(provinceSubscriberRepository.getProvinceSubscribers())
-                .handleRate3h(transmissionChannelIncidentRepository.getHandleRate3h())
-                .handleRate24h(transmissionChannelIncidentRepository.getHandleRate24h())
-                .handleRate48h(transmissionChannelIncidentRepository.getHandleRate48h())
-                .handleRate3hVip(transmissionChannelIncidentRepository.getHandleRate3hVip())
-                .satisfactionLevel(transmissionChannelIncidentRepository.getLevelSatisfy())
-                .avgTimeHandle(transmissionChannelIncidentRepository.getAvgHandleTime())
-                .build();
+    private TransmissionChanelDTO fetchExcelData(LocalDate currentDate) {
+        return new TransmissionChanelDTO(
+                transmissionChannelIncidentRepository.getCategorySummary(currentDate),
+                transmissionChannelIncidentRepository.getOnTimeHandle(currentDate),
+                transmissionChannelIncidentRepository.getDailyStats(currentDate),
+                transmissionChannelIncidentRepository.getComplaintRateAndTotalSubscribers(currentDate),
+                transmissionChannelIncidentRepository.getHandleRate3h(currentDate),
+                transmissionChannelIncidentRepository.getHandleRate24h(currentDate),
+                transmissionChannelIncidentRepository.getHandleRate48h(currentDate),
+                transmissionChannelIncidentRepository.getHandleRate3hVip(currentDate),
+                transmissionChannelIncidentRepository.getLevelSatisfy(currentDate),
+                transmissionChannelIncidentRepository.getAvgHandleTime(currentDate),
+                null,
+                transmissionChannelIncidentRepository.getLast8daysAndAvgMonth(currentDate),
+                transmissionChannelIncidentRepository.getIncidentMonthlySummary(currentDate.getYear())
+        );
     }
 
-    private void fillTable1(Sheet sheet, ExcelDTO data) {
-        fillParentKpi(sheet, data.getServiceSubscribers());
-        fillServiceSubscriberData(sheet, data.getServiceSubscribers());
-        fillCategoryData(sheet, data.getCategorySummaryResults(), data.getComplaintDayResults());
-    }
+    private void fillTable1(Sheet sheet, TransmissionChanelDTO data, LocalDate currentDate) {
+        List<Map<String, Object>> categoryResults = data.getCategorySummaryResults();
+        if (categoryResults == null || categoryResults.isEmpty()) return;
 
-    private void fillParentKpi(Sheet sheet, List<ServiceSubscriber> serviceSubscribers) {
-        if (serviceSubscribers.isEmpty()) return;
+        // Lấy số ngày trong tháng từ currentDate
+        int daysInMonth = currentDate.lengthOfMonth();
 
-        ServiceSubscriber parent = serviceSubscribers.get(0);
-        BigDecimal parentKpi = parent.getComplaintGroupKpi();
+        // Nhóm theo incidentName để tính tổng totalPerDay
+        Map<String, Integer> sumByIncident = categoryResults.stream()
+                .collect(Collectors.groupingBy(
+                        r -> Objects.toString(r.get("incidentName"), ""),
+                        Collectors.summingInt(r -> ((Number) r.get("totalPerDay")).intValue())
+                ));
 
-        if (parentKpi != null) {
-            setCellValue(sheet, PARENT_KPI_ROW, KPI_COL, parentKpi.doubleValue());
+        // Tính avgDay = tổng / daysInMonth
+        Map<String, Double> avgByIncident = sumByIncident.entrySet().stream()
+                .collect(Collectors.toMap(
+                        Map.Entry::getKey,
+                        e -> e.getValue() / (double) daysInMonth
+                ));
+
+        // Lọc dữ liệu cho ngày hiện tại
+        List<Map<String, Object>> filteredResults = categoryResults.stream()
+                .filter(Objects::nonNull)
+                .filter(record -> {
+                    LocalDate recordDate = extractLocalDate(record.get("day"));
+                    return recordDate != null && recordDate.equals(currentDate);
+                }).collect(Collectors.toList());
+
+        if (filteredResults.isEmpty()) {
+            System.out.println("Không có dữ liệu cho ngày: " + currentDate);
+            return;
+        }
+
+        // Fill ngày lên tiêu đề
+        Row titleRow = sheet.getRow(4);
+        if (titleRow == null) titleRow = sheet.createRow(4);
+        Cell titleCell = titleRow.getCell(3);
+        if (titleCell == null) titleCell = titleRow.createCell(3);
+        titleCell.setCellValue(currentDate.format(DateTimeFormatter.ofPattern("dd/MM/yyyy")));
+
+        int rowIndex = TABLE1_START_ROW;
+
+        for (Map<String, Object> rowData : filteredResults) {
+            if (rowIndex > TABLE1_END_ROW) break;
+
+            Row row = sheet.getRow(rowIndex);
+            if (row == null) row = sheet.createRow(rowIndex);
+
+            String incidentName = Objects.toString(rowData.get("incidentName"), "");
+
+            // Category = incidentName
+            setCellValue(row, CATEGORY_COL, incidentName);
+
+            // KPI = kpiChild
+            setCellValue(row, KPI_COL, rowData.get("kpiChild"));
+
+            // Subscribers = totalSubcriberChild
+            setCellValue(row, SUBSCRIBERS_COL, rowData.get("totalSubcriberChild"));
+
+            // Value = totalPerDay
+            setCellValue(row, VALUE_COL, rowData.get("totalPerDay"));
+
+            // Comp day = avgDay tính từ code
+            Double avgDay = avgByIncident.getOrDefault(incidentName, 0.0);
+            setCellValue(row, COMP_DAY_COL, avgDay);
+
+            rowIndex++;
+        }
+
+        // Fill parent KPI row
+        Row parentRow = sheet.getRow(PARENT_KPI_ROW);
+        if (parentRow == null) parentRow = sheet.createRow(PARENT_KPI_ROW);
+
+        Optional<Map<String, Object>> firstRowOpt = filteredResults.stream().findFirst();
+        if (firstRowOpt.isPresent()) {
+            Map<String, Object> firstRow = firstRowOpt.get();
+            setCellValue(parentRow, KPI_COL, firstRow.get("kpiParent"));
+            setCellValue(parentRow, SUBSCRIBERS_COL, firstRow.get("totalSubcriberParent"));
         }
     }
 
-    private void fillServiceSubscriberData(Sheet sheet, List<ServiceSubscriber> serviceSubscribers) {
-        for (int i = 0; i < serviceSubscribers.size(); i++) {
-            ServiceSubscriber ss = serviceSubscribers.get(i);
-            log.debug("Processing service subscriber: {}", ss);
 
-            int rowIndex = TABLE1_START_ROW + i;
-            setCellValue(sheet, rowIndex, SUBSCRIBERS_COL, ss.getTotalSubscribers());
-            setCellValue(sheet, rowIndex, KPI_COL, ss.getServiceKpi().doubleValue());
+    private void fillTable2(Sheet sheet, TransmissionChanelDTO data, LocalDate currentDate) {
+        List<Map<String, Object>> raw = data.getOnTimeHandle();
+        if (raw == null || raw.isEmpty()) return;
+        List<Map<String, Object>> onTimeHandle = calculateCumulativeTable2(raw);
+        Row titleRow = sheet.getRow(4);
+        if (titleRow == null) {
+            titleRow = sheet.createRow(4);
+        }
+        Cell titleCell = titleRow.getCell(18);
+        if (titleCell == null) {
+            titleCell = titleRow.createCell(18);
+        }
+        titleCell.setCellValue(currentDate.format(DateTimeFormatter.ofPattern("dd/MM/yyyy")));
+
+        List<Map<String, Object>> filteredRecords = onTimeHandle.stream()
+                .filter(Objects::nonNull)
+                .filter(record -> {
+                    LocalDate recordDate = extractLocalDate(record.get("day"));
+                    return recordDate != null && recordDate.equals(currentDate);
+                }).collect(Collectors.toList());
+
+
+        if (filteredRecords.isEmpty()) {
+            System.out.println(" Không có dữ liệu cho ngày: " + currentDate);
+            return;
+        }
+
+        for (Map<String, Object> record : filteredRecords) {
+            String incident = (String) record.get("incidentName");
+
+            int rowOffset = -1;
+            if ("Tỉ lệ sự cố xử lý trong 3h".equals(incident)) {
+                rowOffset = 0;
+            } else if ("Tỉ lệ sự cố xử lý trong 24h".equals(incident)) {
+                rowOffset = 1;
+            } else if ("Tỉ lệ sự cố xử lý trong 48h".equals(incident)) {
+                rowOffset = 2;
+            }
+
+            if (rowOffset < 0) {
+                System.out.println("Incident name không khớp: " + incident);
+                continue;
+            }
+
+            // --- KPI Progress ---
+            Double kpiProgress = getNumberValue(record, "kpi_progress");
+            if (kpiProgress != null) {
+                setCellValue(sheet, TABLE2_START_ROW + rowOffset, PROGRESS_KPI_COL, kpiProgress / 100);
+            }
+
+            // --- xử lý ---
+            Double handle = getNumberValue(record, "xu_li_trong_han_3h");
+            if (handle != null) {
+                setCellValue(sheet, TABLE2_START_ROW + rowOffset, ON_TIME_HANDLE_COL, handle);
+            }
+
+            // --- Tổng xử lý ---
+            Double tongXuLy = getNumberValue(record, "tong_xu_ly");
+            if (tongXuLy != null) {
+                setCellValue(sheet, TABLE2_START_ROW + rowOffset, TOTAL_HANDLE_COL, tongXuLy);
+            }
+
+            // --- Kết quả ---
+            if (tongXuLy != null && tongXuLy > 0) {
+                Double xuLyTrongHan = null;
+                if (incident.contains("3h")) {
+                    xuLyTrongHan = getNumberValue(record, "ty_le_3h_luy_ke");
+                } else if (incident.contains("24h")) {
+                    xuLyTrongHan = getNumberValue(record, "ty_le_24h_luy_ke");
+                } else if (incident.contains("48h")) {
+                    xuLyTrongHan = getNumberValue(record, "ty_le_48h_luy_ke");
+                }
+                if (xuLyTrongHan != null) {
+                    setCellValue(sheet, TABLE2_START_ROW + rowOffset, RESULT_COL, xuLyTrongHan / 100);
+                }
+            }
         }
     }
+    private List<Map<String, Object>> calculateCumulativeTable2(List<Map<String, Object>> rawData) {
+        // Gom nhóm theo parentName + incidentName
+        Map<String, List<Map<String, Object>>> grouped = rawData.stream()
+                .collect(Collectors.groupingBy(r -> r.get("parentName") + "_" + r.get("incidentName")));
 
-    private void fillCategoryData(Sheet sheet, List<Map<String, Object>> categorySummary,
-                                  List<Map<String, Object>> complaintDayResults) {
-        for (int rowIndex = TABLE1_START_ROW; rowIndex <= TABLE1_END_ROW; rowIndex++) {
-            String templateCategory = getCellStringValue(sheet, rowIndex, CATEGORY_COL);
-            if (templateCategory == null) continue;
+        List<Map<String, Object>> result = new ArrayList<>();
 
-            final int currentRowIndex = rowIndex;
+        for (List<Map<String, Object>> group : grouped.values()) {
+            // Sắp xếp theo ngày
+            group.sort(Comparator.comparing(r -> extractLocalDate(r.get("day"))));
 
-            // Fill category summary data
-            findMatchingCategory(categorySummary, templateCategory, "category_group")
-                    .ifPresent(data -> {
-                        setCellValue(sheet, currentRowIndex, VALUE_COL, getNumberValue(data, "total_records"));
-                    });
+            int cum3h = 0, cum24h = 0, cum48h = 0, cumTotal = 0;
 
-            // Fill complaint day data
-            findMatchingCategory(complaintDayResults, templateCategory, "category_group")
-                    .ifPresent(data -> {
-                        setCellValue(sheet, currentRowIndex, COMP_DAY_COL, getNumberValue(data, "pa_ngay"));
-                    });
+            for (Map<String, Object> record : group) {
+                int xuLy3h = getInt(record, "xu_li_trong_han_3h");
+                int xuLy24h = getInt(record, "xu_li_trong_han_24h");
+                int xuLy48h = getInt(record, "xu_li_trong_han_48h");
+                int tong = getInt(record, "tong_xu_ly");
+
+                cum3h += xuLy3h;
+                cum24h += xuLy24h;
+                cum48h += xuLy48h;
+                cumTotal += tong;
+
+                record.put("tong_3h_luy_ke", cum3h);
+                record.put("tong_24h_luy_ke", cum24h);
+                record.put("tong_48h_luy_ke", cum48h);
+                record.put("tong_xu_ly_luy_ke", cumTotal);
+
+                record.put("ty_le_3h_luy_ke", cumTotal > 0 ? round2((cum3h * 100.0) / cumTotal) : 0.0);
+                record.put("ty_le_24h_luy_ke", cumTotal > 0 ? round2((cum24h * 100.0) / cumTotal) : 0.0);
+                record.put("ty_le_48h_luy_ke", cumTotal > 0 ? round2((cum48h * 100.0) / cumTotal) : 0.0);
+
+                result.add(record);
+            }
         }
+        return result;
     }
 
-    private void fillTable2(Sheet sheet, ExcelDTO data) {
-        fillProgressKpiData(sheet, data.getProgressKpi());
-        fillOnTimeHandleData(sheet, data.getOnTimeHandle());
-        fillTotalHandleData(sheet, data.getTotalHandle());
-        fillResultData(sheet, data.getResults());
+    private int getInt(Map<String, Object> map, String key) {
+        Object val = map.get(key);
+        if (val instanceof Number) {
+            return ((Number) val).intValue();
+        }
+        return 0;
     }
 
-    private void fillTable3(Sheet sheet, ExcelDTO data) {
-        fillDailyStats(sheet, data.getDailyStats());
+    private double round2(double value) {
+        return Math.round(value * 100.0) / 100.0;
     }
 
-    private void fillTable4(Sheet sheet, ExcelDTO data) {
-        fillComplaintRateAndSubscribersByProvince(sheet, data.getComplaintRate(), data.getProvinceSubscribers());
+
+    private void fillTable3(Sheet sheet, TransmissionChanelDTO data, LocalDate currentDate) {
+        fillG41Date(sheet, currentDate);
+        // Fill header row 31 (C, D, E)
+        fillTable3Header(sheet, currentDate);
+        
+        fillDailyStats(sheet, data.getDailyStats(), currentDate);
     }
 
-    private void fillTable5(Sheet sheet, ExcelDTO data) {
+    private void fillTable4(Sheet sheet, TransmissionChanelDTO data, LocalDate currentDate) {
+        // Fill header row 42 (G)
+        fillTable4Header(sheet, currentDate);
+        
+        // Fill date into G41
+
+        
+        fillComplaintRateByProvince(sheet, data.getComplaintRate(), currentDate);
+    }
+
+    private void fillTable5(Sheet sheet, TransmissionChanelDTO data, LocalDate currentDate) {
+        // Fill header row 82 (H)
+        fillTable5Header(sheet, currentDate);
+        
         List<Map<String, Object>> handleRateData = data.getHandleRate3h();
         Double progress3h = null;
-        if (data.getProgressKpi() != null && !data.getProgressKpi().isEmpty()) {
-            Double val = getNumberValue(data.getProgressKpi().get(0), "progress_3h");
-            if (val != null) progress3h = val / 100;
-        }
-        log.debug("Progress KPI 3h: {}", progress3h);
 
-        fillHandleRate3hByProvince(sheet, handleRateData, progress3h);
-        fillTable5Kpi(sheet, data.getProgressKpi());
+        if (data.getOnTimeHandle() != null && !data.getOnTimeHandle().isEmpty()) {
+            Optional<Map<String, Object>> scKpi = data.getOnTimeHandle().stream()
+                    .filter(row -> {
+                        Object parent = row.get("incidentName");
+                        return parent != null && parent.toString().equals("Tỉ lệ sự cố xử lý trong 3h");
+                    })
+                    .findFirst();
+
+            if (scKpi.isPresent()) {
+                Double val = getNumberValue(scKpi.get(), "kpi_progress");
+                if (val != null) {
+                    progress3h = val;
+                }
+            }
+        }
+
+        fillHandleRate3hByProvince(sheet, handleRateData, progress3h, currentDate);
+        fillTable5Kpi(sheet, progress3h);
     }
 
-    private void fillTable6(Sheet sheet, ExcelDTO data) {
+    private void fillTable6(Sheet sheet, TransmissionChanelDTO data, LocalDate currentDate) {
+        // Fill header row 122 (H)
+        fillTable6Header(sheet, currentDate);
+        
         List<Map<String, Object>> handleRateData = data.getHandleRate24h();
         Double progress24h = null;
-        if (data.getProgressKpi() != null && !data.getProgressKpi().isEmpty()) {
-            Double val = getNumberValue(data.getProgressKpi().get(0), "progress_24h");
-            if (val != null) progress24h = val / 100;
+        if (data.getOnTimeHandle() != null && !data.getOnTimeHandle().isEmpty()) {
+            Optional<Map<String, Object>> scKpi = data.getOnTimeHandle().stream()
+                    .filter(row -> {
+                        Object parent = row.get("incidentName");
+                        return parent != null && parent.toString().equals("Tỉ lệ sự cố xử lý trong 24h");
+                    })
+                    .findFirst();
+
+            if (scKpi.isPresent()) {
+                Double val = getNumberValue(scKpi.get(), "kpi_progress");
+                if (val != null) {
+                    progress24h = val;
+                }
+            }
         }
-        fillHandleRate24hByProvince(sheet, handleRateData, progress24h);
-        fillTable6Kpi(sheet, data.getProgressKpi());
+        fillHandleRate24hByProvince(sheet, handleRateData, progress24h, currentDate);
+        fillTable6Kpi(sheet, progress24h);
+
     }
 
-    private void fillTable7(Sheet sheet, ExcelDTO data) {
+    private void fillTable7(Sheet sheet, TransmissionChanelDTO data, LocalDate currentDate) {
+        // Fill header row 162 (H)
+        fillTable7Header(sheet, currentDate);
+        
         List<Map<String, Object>> handleRateData = data.getHandleRate48h();
         Double progress48h = null;
-        if (data.getProgressKpi() != null && !data.getProgressKpi().isEmpty()) {
-            Double val = getNumberValue(data.getProgressKpi().get(0), "progress_48h");
-            if (val != null) progress48h = val / 100;
+        if (data.getOnTimeHandle() != null && !data.getOnTimeHandle().isEmpty()) {
+            Optional<Map<String, Object>> scKpi = data.getOnTimeHandle().stream()
+                    .filter(row -> {
+                        Object parent = row.get("incidentName");
+                        return parent != null && parent.toString().equals("Tỉ lệ sự cố xử lý trong 48h");
+                    })
+                    .findFirst();
+
+            if (scKpi.isPresent()) {
+                Double val = getNumberValue(scKpi.get(), "kpi_progress");
+                if (val != null) {
+                    progress48h = val;
+                }
+            }
         }
-        fillHandleRate48hByProvince(sheet, handleRateData, progress48h);
-        fillTable7Kpi(sheet, data.getProgressKpi());
+        fillHandleRate48hByProvince(sheet, handleRateData, progress48h, currentDate);
+        fillTable7Kpi(sheet, progress48h);
     }
 
-    private void fillTable8(Sheet sheet, ExcelDTO data) {
+    private void fillTable8(Sheet sheet, TransmissionChanelDTO data, LocalDate currentDate) {
+        // Fill header row 202 (H)
+        fillTable8Header(sheet, currentDate);
+        
         List<Map<String, Object>> handleRateData = data.getHandleRate3hVip();
         Double progress3hVip = null;
-        if (data.getProgressKpi() != null && !data.getProgressKpi().isEmpty()) {
-            Double val = getNumberValue(data.getProgressKpi().get(0), "progress_3hVip");
-            if (val != null) progress3hVip = val / 100;
+        if (data.getOnTimeHandle() != null && !data.getOnTimeHandle().isEmpty()) {
+            Optional<Map<String, Object>> scKpi = data.getOnTimeHandle().stream()
+                    .filter(row -> {
+                        Object parent = row.get("incidentName");
+                        return parent != null && parent.toString().equals("Tỉ lệ sự cố xử lý trong 3h Vip");
+                    })
+                    .findFirst();
+
+            if (scKpi.isPresent()) {
+                Double val = getNumberValue(scKpi.get(), "kpi_progress");
+                if (val != null) {
+                    progress3hVip = val;
+                }
+            }
         }
-        fillHandleRate3hVipByProvince(sheet, handleRateData, progress3hVip);
-        fillTable8Kpi(sheet, data.getProgressKpi());
+        fillHandleRate3hVipByProvince(sheet, handleRateData, progress3hVip, currentDate);
+        fillTable8Kpi(sheet, progress3hVip);
     }
 
-    private void fillProgressKpiData(Sheet sheet, List<Map<String, Object>> progressKpi) {
-        if (progressKpi == null || progressKpi.isEmpty()) return;
-
-        Map<String, Object> data = progressKpi.get(0);
-        fillTimeBasedData(sheet, data, PROGRESS_KPI_COL,
-                "progress_3h", "progress_24h", "progress_48h", true);
-    }
-
-    private void fillOnTimeHandleData(Sheet sheet, List<Map<String, Object>> onTimeHandle) {
-        findCategoryData(onTimeHandle, TOTAL, "category")
-                .ifPresent(data -> {
-                    fillTimeBasedData(sheet, data, ON_TIME_HANDLE_COL,
-                            "xu_li_trong_han_3h", "xu_li_trong_han_24h", "xu_li_trong_han_48h", false);
-                });
-    }
-
-    private void fillTotalHandleData(Sheet sheet, List<Map<String, Object>> totalHandle) {
-        findCategoryData(totalHandle, TOTAL_PROCESSED_CATEGORY, "category")
-                .ifPresent(data -> {
-                    Double totalValue = getNumberValue(data, "tong_xu_ly");
-                    if (totalValue != null) {
-                        for (int i = 0; i < 3; i++) {
-                            setCellValue(sheet, TABLE2_START_ROW + i, TOTAL_HANDLE_COL, totalValue);
-                        }
-                    }
-                });
-    }
-
-    private void fillResultData(Sheet sheet, List<Map<String, Object>> results) {
-        findCategoryData(results, TOTAL_PROCESSED_CATEGORY, "category")
-                .ifPresent(data -> {
-                    Double total = getNumberValue(data, "tong_xu_ly");
-                    if (total != null && total > 0) {
-                        Double val3h = getNumberValue(data, "xu_li_trong_han_3h");
-                        Double val24h = getNumberValue(data, "xu_li_trong_han_24h");
-                        Double val48h = getNumberValue(data, "xu_li_trong_han_48h");
-
-                        setCellValue(sheet, TABLE2_START_ROW, RESULT_COL,
-                                val3h != null ? val3h / total : null);
-                        setCellValue(sheet, TABLE2_START_ROW + 1, RESULT_COL,
-                                val24h != null ? val24h / total : null);
-                        setCellValue(sheet, TABLE2_START_ROW + 2, RESULT_COL,
-                                val48h != null ? val48h / total : null);
-                    }
-                });
-    }
-
-    private void fillTimeBasedData(Sheet sheet, Map<String, Object> data, int column,
-                                   String key3h, String key24h, String key48h, boolean divideBy100) {
-        Double val3h = getNumberValue(data, key3h);
-        Double val24h = getNumberValue(data, key24h);
-        Double val48h = getNumberValue(data, key48h);
-
-        if (divideBy100) {
-            val3h = val3h != null ? val3h / 100 : null;
-            val24h = val24h != null ? val24h / 100 : null;
-            val48h = val48h != null ? val48h / 100 : null;
-        }
-
-        setCellValue(sheet, TABLE2_START_ROW, column, val3h);
-        setCellValue(sheet, TABLE2_START_ROW + 1, column, val24h);
-        setCellValue(sheet, TABLE2_START_ROW + 2, column, val48h);
-    }
-
-    private void fillDailyStats(Sheet sheet, List<Map<String, Object>> dailyData) {
+    private void fillDailyStats(Sheet sheet, List<Map<String, Object>> dailyData, LocalDate currentDate) {
         if (dailyData == null || dailyData.isEmpty()) return;
 
-        // Process each service row from B34 to B38 (rows 33-37 in 0-based indexing)
+        int maxDay = currentDate.getDayOfMonth();
+
+        // Remove null records up-front for safety
+        List<Map<String, Object>> safeDailyData = dailyData.stream()
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+
+        // --- 1. Fill chi tiết theo incidentName (rows 34–37) ---
         for (int serviceRow = TABLE3_START_ROW; serviceRow <= TABLE3_END_ROW; serviceRow++) {
-            String serviceName = getCellStringValue(sheet, serviceRow, CATEGORY_COL); // Column B
+            String serviceName = getCellStringValue(sheet, serviceRow, CATEGORY_COL); // Cột B
             if (serviceName == null) continue;
 
-            final int currentServiceRow = serviceRow; // Make effectively final for lambda
+            final int currentServiceRow = serviceRow;
 
-            // Filter all data by cate_hien_thi matching service name
-            List<Map<String, Object>> serviceData = dailyData.stream()
+            List<Map<String, Object>> serviceData = safeDailyData.stream()
                     .filter(d -> {
-                        Object cate = d.get("cate_hien_thi");
-                        return cate != null &&
-                                cate.toString().trim()
-                                        .contains(serviceName);
+                        Object cate = d.get("incidentName");
+                        Object parent = d.get("parentName");
+                        return cate != null && cate.toString().trim().contains(serviceName) &&
+                               parent != null && "SC".equals(parent.toString().trim());
                     })
                     .collect(Collectors.toList());
 
+            // Reset cells: < currentDate = 0, > currentDate = null
             for (int day = 1; day <= 31; day++) {
-                int colIndex = TABLE3_DATA_START_COL + (day - 1); // E=4, F=5, etc.
-                setCellValue(sheet, currentServiceRow, colIndex, 0.0);
+                int colIndex = TABLE3_DATA_START_COL + (day - 1);
+                if (day <= maxDay) {
+                    setCellValue(sheet, currentServiceRow, colIndex, 0.0);
+                } else {
+                    setCellValue(sheet, currentServiceRow, colIndex, null);
+                }
             }
 
-            // Fill data for each day
+            // Fill dữ liệu cho incidentName
             serviceData.forEach(data -> {
-                Object ngayObj = data.get("ngay");
-                Object countObj = data.get("so_luong");
+                Object ngayObj = data.get("day");
+                Object countObj = data.get("numberOfSC");
 
-                if (ngayObj != null && countObj instanceof Number) {
-                    // Determine column by day (assuming ngayObj is a Date)
-                    int day = extractDayFromDate(ngayObj);
-                    if (day > 0) {
-                        int colIndex = TABLE3_DATA_START_COL + (day - 1); // E=4, F=5, etc.
+                LocalDate date = extractLocalDate(ngayObj);
+                if (date != null &&
+                        date.getMonthValue() == currentDate.getMonthValue() &&
+                        date.getYear() == currentDate.getYear() &&
+                        countObj instanceof Number) {
+                    int day = date.getDayOfMonth();
+                    if (day > 0 && day <= maxDay) {
+                        int colIndex = TABLE3_DATA_START_COL + (day - 1);
                         setCellValue(sheet, currentServiceRow, colIndex, ((Number) countObj).doubleValue());
                     }
                 }
             });
+            // --- Fill AVG cho từng incidentName ---
+            Optional<Map<String, Object>> firstValid = serviceData.stream().filter(Objects::nonNull).findFirst();
+            if (firstValid.isPresent()) {
+                Object avgIncident = firstValid.get().get("avg_per_incident");
+                if (avgIncident instanceof Number) {
+                    setCellValue(sheet, currentServiceRow, TABLE3_AVG_COL, ((Number) avgIncident).doubleValue());
+                }
+            }
+        }
+
+        // --- 2. Fill tổng SC (row 33) & HT (row 38) ---
+        for (int day = 1; day <= 31; day++) {
+            int colIndex = TABLE3_DATA_START_COL + (day - 1);
+            if (day <= maxDay) {
+                setCellValue(sheet, TABLE3_SC_ROW, colIndex, 0.0);
+                setCellValue(sheet, TABLE3_HT_ROW, colIndex, 0.0);
+            } else {
+                setCellValue(sheet, TABLE3_SC_ROW, colIndex, null);
+                setCellValue(sheet, TABLE3_HT_ROW, colIndex, null);
+            }
+        }
+
+        safeDailyData.forEach(data -> {
+            Object ngayObj = data.get("day");
+            Object scObj = data.get("total_SC");
+            Object htObj = data.get("total_HT");
+
+            LocalDate date = extractLocalDate(ngayObj);
+            if (date != null &&
+                    date.getMonthValue() == currentDate.getMonthValue() &&
+                    date.getYear() == currentDate.getYear()) {
+                int day = date.getDayOfMonth();
+                if (day > 0 && day <= maxDay) {
+                    int colIndex = TABLE3_DATA_START_COL + (day - 1);
+
+                    if (scObj instanceof Number) {
+                        setCellValue(sheet, TABLE3_SC_ROW, colIndex, ((Number) scObj).doubleValue());
+                    }
+                    if (htObj instanceof Number) {
+                        setCellValue(sheet, TABLE3_HT_ROW, colIndex, ((Number) htObj).doubleValue());
+                    }
+                }
+            }
+        });
+        // --- 3. Fill AVG SC, HT, TotalAll ---
+        Optional<Map<String, Object>> firstRowOpt = safeDailyData.stream().filter(Objects::nonNull).findFirst();
+        if (firstRowOpt.isPresent()) {
+            Map<String, Object> firstRow = firstRowOpt.get();
+            Object avgSC = firstRow.get("avg_SC");
+            Object avgHT = firstRow.get("avg_HT");
+            Object avgTotalAll = firstRow.get("avg_totalAll");
+
+            if (avgSC instanceof Number) {
+                setCellValue(sheet, TABLE3_SC_ROW, TABLE3_AVG_COL, ((Number) avgSC).doubleValue());
+            }
+            if (avgHT instanceof Number) {
+                setCellValue(sheet, TABLE3_HT_ROW, TABLE3_AVG_COL, ((Number) avgHT).doubleValue());
+            }
+            if (avgTotalAll instanceof Number) {
+                setCellValue(sheet, TABLE3_TOTAL_ROW, TABLE3_AVG_COL, ((Number) avgTotalAll).doubleValue());
+            }
         }
     }
 
-    private void fillComplaintRateAndSubscribersByProvince(Sheet sheet, List<Map<String, Object>> complaintData,
-                                                           List<Map<String, Object>> provinceSubscribers) {
-        if (provinceSubscribers == null || provinceSubscribers.isEmpty()) return;
+    private void fillComplaintRateByProvince(Sheet sheet, List<Map<String, Object>> complaintData, LocalDate currentDate) {
+        if (complaintData == null || complaintData.isEmpty()) return;
 
-        int currentDay = java.time.LocalDate.now().getDayOfMonth();
+        int currentDay = currentDate.getDayOfMonth();
 
-        // Create optimized maps once
-        Map<String, List<Map<String, Object>>> dataByProvince = complaintData != null ?
-                complaintData.stream().collect(Collectors.groupingBy(
-                        data -> data.get("tinh") != null ? data.get("tinh").toString().trim() : "Unknown"
-                )) : Map.of();
-
-        Map<String, Double> provinceSubscriberMap = provinceSubscribers.stream()
-                .collect(Collectors.toMap(
-                        data -> data.get("province_name") != null ? data.get("province_name").toString().trim() : "Unknown",
-                        data -> {
-                            Object sltbObj = data.get("total_subscribers");
-                            return (sltbObj instanceof Number) ? ((Number) sltbObj).doubleValue() : 0.0;
-                        }
+        // Group data by province
+        Map<String, List<Map<String, Object>>> dataByProvince = complaintData.stream()
+                .collect(Collectors.groupingBy(
+                        data -> data.get("province") != null ? data.get("province").toString().trim() : "Unknown"
                 ));
 
-        // Fill sltb to column E for all province rows
         for (int provinceRow = TABLE4_START_ROW; provinceRow <= TABLE4_END_ROW; provinceRow++) {
             String provinceName = getCellStringValue(sheet, provinceRow, CATEGORY_COL);
             if (provinceName == null) continue;
 
-            Double subscriberCount = provinceSubscriberMap.entrySet().stream()
-                    .filter(entry -> {
-                        String lowerKey = entry.getKey().toLowerCase();
+            // Lấy data của tỉnh
+            List<Map<String, Object>> provinceData = dataByProvince.entrySet().stream()
+                    .filter(e -> {
+                        String lowerKey = e.getKey().toLowerCase();
                         String lowerName = provinceName.toLowerCase();
                         return lowerKey.contains(lowerName) || lowerName.contains(lowerKey);
                     })
                     .map(Map.Entry::getValue)
                     .findFirst()
-                    .orElse(0.0);
+                    .orElse(Collections.emptyList());
 
-            setCellValue(sheet, provinceRow, 4, subscriberCount); // Column E
-        }
+            provinceData.sort(Comparator.comparingInt(d -> extractDayFromDate(d.get("day"))));
 
-        // Fill total sltb to column E for TOTAL row
-        Double totalSltb = provinceSubscriberMap.getOrDefault(TOTAL, 0.0);
-        setCellValue(sheet, TABLE4_TOTAL_ROW, 4, totalSltb);
+            Map<Integer, Map<String, Object>> dayMap = new HashMap<>();
+            Double provinceSltb = null; // số thuê bao chung cho tỉnh này
 
-        // Process province rows with optimized logic
-        for (int provinceRow = TABLE4_START_ROW; provinceRow <= TABLE4_END_ROW; provinceRow++) {
-            String provinceName = getCellStringValue(sheet, provinceRow, CATEGORY_COL);
-            if (provinceName == null) continue;
+            for (Map<String, Object> data : provinceData) {
+                int day = extractDayFromDate(data.get("day"));
+                if (day > 0 && day <= currentDay) {
+                    dayMap.put(day, data);
+                    // Cột E sẽ fill sltb đầu tiên có trong list
+                    if (provinceSltb == null && data.get("sltb") instanceof Number) {
+                        provinceSltb = ((Number) data.get("sltb")).doubleValue();
+                    }
+                }
+            }
 
-            // Find subscriber count (already calculated above, but need to recalculate for consistency)
-            Double subscriberCount = provinceSubscriberMap.entrySet().stream()
-                    .filter(entry -> {
-                        String lowerKey = entry.getKey().toLowerCase();
-                        String lowerName = provinceName.toLowerCase();
-                        return lowerKey.contains(lowerName) || lowerName.contains(lowerKey);
-                    })
-                    .map(Map.Entry::getValue)
-                    .findFirst()
-                    .orElse(0.0);
+            // ==== FILL CỘT E (LŨY KẾ SLTB) ====
+            if (provinceSltb != null) {
+                setCellValue(sheet, provinceRow, TABLE4_DATA_START_COL - 2, provinceSltb);
+            }
 
-            // Initialize default values for past days only
+            Double lastKnownSltb = provinceSltb;
+
+            // ==== FILL CÁC NGÀY ====
             for (int day = 1; day <= currentDay; day++) {
                 int colIndex = TABLE4_DATA_START_COL + (day - 1) * 3;
-                setCellValue(sheet, provinceRow, colIndex, 0.0); // slpa
-                setCellValue(sheet, provinceRow, colIndex + 1, subscriberCount); // sltb
-                setCellValue(sheet, provinceRow, colIndex + 2, 0.0); // tlpa
-            }
 
-            // Fill actual complaint data if available
-            Optional<String> matchingKey = dataByProvince.keySet().stream()
-                    .filter(key -> {
-                        String lowerKey = key.toLowerCase();
-                        String lowerName = provinceName.toLowerCase();
-                        return lowerKey.contains(lowerName) || lowerName.contains(lowerKey);
-                    })
-                    .findFirst();
+                Map<String, Object> data = dayMap.get(day);
+                double slpa = 0.0;
+                Double sltb = null;
+                Double tlpa = 0.0;
 
-            if (matchingKey.isPresent()) {
-                List<Map<String, Object>> provinceData = dataByProvince.get(matchingKey.get());
-                int finalProvinceRow = provinceRow;
-                provinceData.forEach(data -> {
-                    Object receivedDateObj = data.get("received_date");
-                    Object slpaObj = data.get("slpa");
-                    Object tlpaObj = data.get("tlpa");
+                if (data != null) {
+                    slpa = data.get("slpa") instanceof Number ? ((Number) data.get("slpa")).doubleValue() : 0.0;
+                    sltb = data.get("sltb") instanceof Number ? ((Number) data.get("sltb")).doubleValue() : null;
 
-                    if (receivedDateObj != null && slpaObj instanceof Number) {
-                        int day = extractDayFromDate(receivedDateObj);
-                        if (day > 0 && day <= 31) {
-                            int colIndex = TABLE4_DATA_START_COL + (day - 1) * 3;
-                            setCellValue(sheet, finalProvinceRow, colIndex, ((Number) slpaObj).doubleValue());
-                            if (tlpaObj instanceof Number) {
-                                setCellValue(sheet, finalProvinceRow, colIndex + 2, ((Number) tlpaObj).doubleValue());
-                            }
-                        }
+                    if (data.get("tlpa") instanceof Number) {
+                        tlpa = ((Number) data.get("tlpa")).doubleValue();
                     }
-                });
-                log.debug("Filled complaint rate data for province: {} with {} records", provinceName, provinceData.size());
+                }
+
+                if (sltb == null && lastKnownSltb != null) sltb = lastKnownSltb;
+                if (sltb != null) lastKnownSltb = sltb;
+
+                setCellValue(sheet, provinceRow, colIndex, slpa);
+                if (sltb != null) setCellValue(sheet, provinceRow, colIndex + 1, sltb);
+
+                setCellValue(sheet, provinceRow, colIndex + 2, tlpa);
             }
+
         }
 
-        // Handle TOTAL row
-        List<Map<String, Object>> totalData = dataByProvince.get(TOTAL);
-
-        // Initialize TOTAL row with default values for past days
-        for (int day = 1; day <= currentDay; day++) {
-            int colIndex = TABLE4_DATA_START_COL + (day - 1) * 3;
-            setCellValue(sheet, TABLE4_TOTAL_ROW, colIndex, 0.0); // slpa
-            setCellValue(sheet, TABLE4_TOTAL_ROW, colIndex + 1, totalSltb); // sltb
-            setCellValue(sheet, TABLE4_TOTAL_ROW, colIndex + 2, 0.0); // tlpa
-        }
-
-        // Fill actual TOTAL data if available
+        // ==== TOTAL ROW ====
+        List<Map<String, Object>> totalData = dataByProvince.get("Toàn quốc");
         if (totalData != null && !totalData.isEmpty()) {
-            totalData.forEach(data -> {
-                int day = extractDayFromDate(data.get("received_date"));
-                if (day > 0 && day <= 31) {
-                    int colIndex = TABLE4_DATA_START_COL + (day - 1) * 3;
+            totalData.sort(Comparator.comparingInt(d -> extractDayFromDate(d.get("day"))));
 
-                    Object slpa = data.get("slpa");
-                    Object sltb = data.get("sltb");
-                    Object tlpa = data.get("tlpa");
+            Map<Integer, Map<String, Object>> totalDayMap = new HashMap<>();
+            Double totalSltb = null;
 
-                    if (slpa instanceof Number) {
-                        setCellValue(sheet, TABLE4_TOTAL_ROW, colIndex, ((Number) slpa).doubleValue());
+            for (Map<String, Object> data : totalData) {
+                int day = extractDayFromDate(data.get("day"));
+                if (day > 0 && day <= currentDay) {
+                    totalDayMap.put(day, data);
+                    if (totalSltb == null && data.get("sltb") instanceof Number) {
+                        totalSltb = ((Number) data.get("sltb")).doubleValue();
                     }
-                    Double sltbValue = (sltb instanceof Number) ? ((Number) sltb).doubleValue() : totalSltb;
-                    setCellValue(sheet, TABLE4_TOTAL_ROW, colIndex + 1, sltbValue);
-                    if (tlpa instanceof Number) {
-                        setCellValue(sheet, TABLE4_TOTAL_ROW, colIndex + 2, ((Number) tlpa).doubleValue());
-                    }
-                }
-            });
-        }
-    }
-
-    private void fillTable5Kpi(Sheet sheet, List<Map<String, Object>> kpiData) {
-        if (kpiData == null || kpiData.isEmpty()) return;
-
-        Double progress3h = getNumberValue(kpiData.get(0), "progress_3h");
-        if (progress3h != null) {
-            String text = String.format("Đánh giá so với KPI (>=%.2f%%)", progress3h);
-            setCellValueTable5(sheet, text);
-            log.debug("Filled Table 5 KPI: {}", text);
-        }
-    }
-    private void fillTable6Kpi(Sheet sheet, List<Map<String, Object>> kpiData) {
-        if (kpiData == null || kpiData.isEmpty()) return;
-
-        Double progress24h = getNumberValue(kpiData.get(0), "progress_24h");
-        if (progress24h != null) {
-            String text = String.format("Đánh giá so với KPI (>=%.2f%%)", progress24h);
-            setCellValueTable6(sheet, text);
-            log.debug("Filled Table 6 KPI: {}", text);
-        }
-    }
-    private void fillTable7Kpi(Sheet sheet, List<Map<String, Object>> kpiData) {
-        if (kpiData == null || kpiData.isEmpty()) return;
-
-        Double progress48h = getNumberValue(kpiData.get(0), "progress_48h");
-        if (progress48h != null) {
-            String text = String.format("Đánh giá so với KPI (>=%.2f%%)", progress48h);
-            setCellValueTable7(sheet, text);
-            log.debug("Filled Table 7 KPI: {}", text);
-        }
-    }
-    private void fillTable8Kpi(Sheet sheet, List<Map<String, Object>> kpiData) {
-        if (kpiData == null || kpiData.isEmpty()) return;
-
-        Double progress3hVip = getNumberValue(kpiData.get(0), "progress_3hVip");
-        if (progress3hVip != null) {
-            String text = String.format("Đánh giá so với KPI (>=%.2f%%)", progress3hVip);
-            setCellValueTable8(sheet, text);
-            log.debug("Filled Table 8 KPI: {}", text);
-        }
-    }
-
-    private void fillHandleRate3hByProvince(Sheet sheet, List<Map<String, Object>> handleRateData, Double progress3h) {
-        if (handleRateData == null) handleRateData = List.of();
-        int currentDay = java.time.LocalDate.now().getDayOfMonth();
-        // Create optimized map once - group data by province
-        Map<String, List<Map<String, Object>>> dataByProvince = handleRateData.stream()
-                .collect(Collectors.groupingBy(
-                        d -> d.get("tinh") != null ? d.get("tinh").toString().trim() : "unknown"
-                ));
-
-        // Process province rows with optimized logic
-        for (int provinceRow = TABLE5_START_ROW; provinceRow <= TABLE5_END_ROW; provinceRow++) {
-            String provinceName = getCellStringValue(sheet, provinceRow, CATEGORY_COL);
-            if (provinceName == null) continue;
-
-            // Initialize default values for past days, null for future days
-            for (int day = 1; day <= 31; day++) {
-                int colIndex = TABLE5_DATA_START_COL + (day - 1) * 3;
-                if (day <= currentDay) {
-                    setCellValue(sheet, provinceRow, colIndex, 0.0);     // da_xu_ly_3h
-                    setCellValue(sheet, provinceRow, colIndex + 1, 0.0); // tong_sc_da_xu_ly
-                    setCellValue(sheet, provinceRow, colIndex + 2, 0.0); // ty_le_3h
-                } else {
-                    setCellValue(sheet, provinceRow, colIndex, null);
-                    setCellValue(sheet, provinceRow, colIndex + 1, null);
-                    setCellValue(sheet, provinceRow, colIndex + 2, null);
                 }
             }
 
-            // Initialize cumulative columns D, E, F (assuming these are fixed columns)
-            setCellValue(sheet, provinceRow, 3, 0.0);  // Column D (luy_ke_3h)
-            setCellValue(sheet, provinceRow, 4, 0.0);  // Column E (tong_sc_luy_ke_3h)
-            setCellValue(sheet, provinceRow, 5, 0.0);  // Column F (ty_le_luy_ke_3h)
-            setCellValueString(sheet, provinceRow, 6, "Không đạt");  // Column G
-
-            // Fill actual handle rate data if available
-            Optional<String> matchingKey = dataByProvince.keySet().stream()
-                    .filter(key -> {
-                        String lowerKey = key.toLowerCase();
-                        String lowerName = provinceName.toLowerCase();
-                        return lowerKey.contains(lowerName) || lowerName.contains(lowerKey);
-                    })
-                    .findFirst();
-
-            if (matchingKey.isPresent()) {
-                List<Map<String, Object>> provinceData = dataByProvince.get(matchingKey.get());
-                int finalProvinceRow = provinceRow;
-
-                provinceData.forEach(data -> {
-                    int day = extractDayFromDate(data.get("ngay"));
-                    if (day > 0 && day <= 31) {
-                        int colIndex = TABLE5_DATA_START_COL + (day - 1) * 3;
-                        setCellValue(sheet, finalProvinceRow, colIndex, getNumberValue(data, "da_xu_ly_3h"));
-                        setCellValue(sheet, finalProvinceRow, colIndex + 1, getNumberValue(data, "tong_sc_da_xu_ly"));
-                        Double tyLe = getNumberValue(data, "ty_le_3h");
-                        if (tyLe != null) {
-                            setCellValue(sheet, finalProvinceRow, colIndex + 2, tyLe / 100);
-                        }
-                    }
-                });
-
-                // Calculate and fill cumulative data for columns D, E, F
-                fillCumulativeDataTable5(sheet, finalProvinceRow, provinceData, progress3h);
-                log.debug("Filled handle rate data for province: {} with {} records", provinceName, provinceData.size());
+            // Fill cột E của TOTAL row
+            if (totalSltb != null) {
+                setCellValue(sheet, TABLE4_TOTAL_ROW, TABLE4_DATA_START_COL - 2, totalSltb);
             }
-        }
-        // Handle TOTAL row
-        fillHandleRateTotalRow(sheet, dataByProvince, currentDay, progress3h);
-    }
-    private void fillCumulativeDataTable5(Sheet sheet, int row, List<Map<String, Object>> provinceData, Double progress3h) {
-        if (provinceData == null || provinceData.isEmpty()) {
-            setCellValue(sheet, row, 3, 0.0);  // Lũy kế 3h
-            setCellValue(sheet, row, 4, 0.0);  // Tổng SC lũy kế
-            setCellValue(sheet, row, 5, 0.0);  // Tỷ lệ lũy kế
-            setCellValueString(sheet, row, 6, "N/A"); // Cột G KPI
-            return;
-        }
 
-        double cumulativeDaXuLy3h = 0.0;
-        double cumulativeTongSc = 0.0;
+            Double lastKnownTotalSltb = totalSltb;
+            for (int day = 1; day <= currentDay; day++) {
+                int colIndex = TABLE4_DATA_START_COL + (day - 1) * 3;
 
-        for (Map<String, Object> data : provinceData) {
-            cumulativeDaXuLy3h += getNumberValue(data, "da_xu_ly_3h") != null
-                    ? getNumberValue(data, "da_xu_ly_3h") : 0.0;
-            cumulativeTongSc += getNumberValue(data, "tong_sc_da_xu_ly") != null
-                    ? getNumberValue(data, "tong_sc_da_xu_ly") : 0.0;
-        }
+                Map<String, Object> data = totalDayMap.get(day);
+                double slpa = 0.0;
+                Double sltb = null;
+                Double tlpa = 0.0; // luôn mặc định 0
 
-        double cumulativePercent = cumulativeTongSc > 0
-                ? (cumulativeDaXuLy3h / cumulativeTongSc)
-                : 0.0;
+                if (data != null) {
+                    slpa = data.get("slpa") instanceof Number ? ((Number) data.get("slpa")).doubleValue() : 0.0;
+                    sltb = data.get("sltb") instanceof Number ? ((Number) data.get("sltb")).doubleValue() : null;
+                    if (data.get("tlpa") instanceof Number) {
+                        tlpa = ((Number) data.get("tlpa")).doubleValue();
+                    }
+                }
 
-        // Fill D, E, F
-        setCellValue(sheet, row, 3, cumulativeDaXuLy3h);
-        setCellValue(sheet, row, 4, cumulativeTongSc);
-        setCellValue(sheet, row, 5, cumulativePercent);
+                if (sltb == null && lastKnownTotalSltb != null) sltb = lastKnownTotalSltb;
+                if (sltb != null) lastKnownTotalSltb = sltb;
 
-        // Fill G (KPI đạt hay không)
-        if (progress3h != null) {
-            String kpiStatus = cumulativePercent >= progress3h ? "Đạt" : "Không đạt";
-            setCellValueString(sheet, row, 6, kpiStatus);
-        } else {
-            setCellValueString(sheet, row, 6, "N/A");
+                setCellValue(sheet, TABLE4_TOTAL_ROW, colIndex, slpa);
+                if (sltb != null) setCellValue(sheet, TABLE4_TOTAL_ROW, colIndex + 1, sltb);
+                setCellValue(sheet, TABLE4_TOTAL_ROW, colIndex + 2, tlpa); // luôn fill
+            }
+
         }
     }
-    private void fillCumulativeDataTable6(Sheet sheet, int row, List<Map<String, Object>> provinceData, Double progress3h) {
-        if (provinceData == null || provinceData.isEmpty()) {
-            setCellValue(sheet, row, 3, 0.0);  // Lũy kế 3h
-            setCellValue(sheet, row, 4, 0.0);  // Tổng SC lũy kế
-            setCellValue(sheet, row, 5, 0.0);  // Tỷ lệ lũy kế
-            setCellValueString(sheet, row, 6, "N/A"); // Cột G KPI
-            return;
-        }
 
-        double cumulativeDaXuLy3h = 0.0;
-        double cumulativeTongSc = 0.0;
+    private void fillTable5Kpi(Sheet sheet, Double progress3h) {
+        if (progress3h == null) return;
 
-        for (Map<String, Object> data : provinceData) {
-            cumulativeDaXuLy3h += getNumberValue(data, "da_xu_ly_24h") != null
-                    ? getNumberValue(data, "da_xu_ly_24h") : 0.0;
-            cumulativeTongSc += getNumberValue(data, "tong_sc_da_xu_ly") != null
-                    ? getNumberValue(data, "tong_sc_da_xu_ly") : 0.0;
-        }
+        String text = String.format("Đánh giá so với KPI (>=%.2f%%)", progress3h);
+        setCellValueTable5(sheet, text);
+        log.debug("Filled Table 5 KPI: {}", text);
+    }
+    private void fillTable6Kpi(Sheet sheet, Double progress24h) {
+        if (progress24h == null) return;
 
-        double cumulativePercent = cumulativeTongSc > 0
-                ? (cumulativeDaXuLy3h / cumulativeTongSc)
-                : 0.0;
+        String text = String.format("Đánh giá so với KPI (>=%.2f%%)", progress24h);
+        setCellValueTable6(sheet, text);
+    }
+    private void fillTable7Kpi(Sheet sheet, Double progress48h) {
+        if (progress48h == null) return;
 
-        // Fill D, E, F
-        setCellValue(sheet, row, 3, cumulativeDaXuLy3h);
-        setCellValue(sheet, row, 4, cumulativeTongSc);
-        setCellValue(sheet, row, 5, cumulativePercent);
+        String text = String.format("Đánh giá so với KPI (>=%.2f%%)", progress48h);
+        setCellValueTable7(sheet, text);
+    }
+    private void fillTable8Kpi(Sheet sheet, Double progress3hVip) {
+        if (progress3hVip == null) return;
 
-        // Fill G (KPI đạt hay không)
-        if (progress3h != null) {
-            String kpiStatus = cumulativePercent >= progress3h ? "Đạt" : "Không đạt";
-            setCellValueString(sheet, row, 6, kpiStatus);
-        } else {
-            setCellValueString(sheet, row, 6, "N/A");
-        }
+        String text = String.format("Đánh giá so với KPI (>=%.2f%%)", progress3hVip);
+        setCellValueTable8(sheet, text);
     }
 
     private void fillHandleRateTotalRow(Sheet sheet, Map<String, List<Map<String, Object>>> dataByProvince, int currentDay, Double progress3h) {
-        List<Map<String, Object>> totalData = dataByProvince.get(TOTAL);
+        List<Map<String, Object>> totalData = dataByProvince.get("Toàn quốc");
 
         // Initialize TOTAL row with default values for past days, null for future days
         for (int day = 1; day <= 31; day++) {
@@ -764,15 +822,15 @@ public class TransmissionChannelIncidentService {
         log.debug("Filled handle rate TOTAL row with cumulative KPI");
     }
     private void fillHandleRateTotalRowTable6(Sheet sheet, Map<String, List<Map<String, Object>>> dataByProvince, int currentDay, Double progress3h) {
-        List<Map<String, Object>> totalData = dataByProvince.get(TOTAL);
+        List<Map<String, Object>> totalData = dataByProvince.get("Toàn quốc");
 
         // Initialize TOTAL row with default values for past days, null for future days
         for (int day = 1; day <= 31; day++) {
             int colIndex = TABLE6_DATA_START_COL - 4 + (day - 1) * 3;
             if (day <= currentDay) {
-                setCellValue(sheet, TABLE6_TOTAL_ROW, colIndex, 0.0);     // da_xu_ly_3h
-                setCellValue(sheet, TABLE6_TOTAL_ROW, colIndex + 1, 0.0); // tong_sc_da_xu_ly
-                setCellValue(sheet, TABLE6_TOTAL_ROW, colIndex + 2, 0.0); // ty_le_3h
+                setCellValue(sheet, TABLE6_TOTAL_ROW, colIndex, 0.0);
+                setCellValue(sheet, TABLE6_TOTAL_ROW, colIndex + 1, 0.0);
+                setCellValue(sheet, TABLE6_TOTAL_ROW, colIndex + 2, 0.0);
             } else {
                 setCellValue(sheet, TABLE6_TOTAL_ROW, colIndex, null);
                 setCellValue(sheet, TABLE6_TOTAL_ROW, colIndex + 1, null);
@@ -814,10 +872,154 @@ public class TransmissionChannelIncidentService {
             setCellValueString(sheet, TABLE6_TOTAL_ROW, 6, "N/A");
         }
     }
-    private void fillHandleRate24hByProvince(Sheet sheet, List<Map<String, Object>> handleRateData, Double progress24h) {
+    private void fillHandleRate3hByProvince(Sheet sheet, List<Map<String, Object>> handleRateData, Double progress3h, LocalDate currentDay) {
+        if (handleRateData == null) handleRateData = List.of();
+        int curDay = currentDay.getDayOfMonth();
+        // Create optimized map once - group data by province
+        Map<String, List<Map<String, Object>>> dataByProvince = handleRateData.stream()
+                .collect(Collectors.groupingBy(
+                        d -> d.get("tinh") != null ? d.get("tinh").toString().trim() : "unknown"
+                ));
+
+        // Process province rows with optimized logic
+        for (int provinceRow = TABLE5_START_ROW; provinceRow <= TABLE5_END_ROW; provinceRow++) {
+            String provinceName = getCellStringValue(sheet, provinceRow, CATEGORY_COL);
+            if (provinceName == null) continue;
+
+            // Initialize default values for past days, null for future days
+            for (int day = 1; day <= 31; day++) {
+                int colIndex = TABLE5_DATA_START_COL + (day - 1) * 3;
+                if (day <= curDay) {
+                    setCellValue(sheet, provinceRow, colIndex, 0.0);     // da_xu_ly_3h
+                    setCellValue(sheet, provinceRow, colIndex + 1, 0.0); // tong_sc_da_xu_ly
+                    setCellValue(sheet, provinceRow, colIndex + 2, 0.0); // ty_le_3h
+                } else {
+                    setCellValue(sheet, provinceRow, colIndex, null);
+                    setCellValue(sheet, provinceRow, colIndex + 1, null);
+                    setCellValue(sheet, provinceRow, colIndex + 2, null);
+                }
+            }
+
+            // Initialize cumulative columns D, E, F (assuming these are fixed columns)
+            setCellValue(sheet, provinceRow, 3, 0.0);  // Column D (luy_ke_3h)
+            setCellValue(sheet, provinceRow, 4, 0.0);  // Column E (tong_sc_luy_ke_3h)
+            setCellValue(sheet, provinceRow, 5, 0.0);  // Column F (ty_le_luy_ke_3h)
+            setCellValueString(sheet, provinceRow, 6, "Không đạt");  // Column G
+
+            // Fill actual handle rate data if available
+            Optional<String> matchingKey = dataByProvince.keySet().stream()
+                    .filter(key -> {
+                        String lowerKey = key.toLowerCase();
+                        String lowerName = provinceName.toLowerCase();
+                        return lowerKey.contains(lowerName) || lowerName.contains(lowerKey);
+                    })
+                    .findFirst();
+
+            if (matchingKey.isPresent()) {
+                List<Map<String, Object>> provinceData = dataByProvince.get(matchingKey.get());
+                int finalProvinceRow = provinceRow;
+
+                provinceData.forEach(data -> {
+                    int day = extractDayFromDate(data.get("ngay"));
+                    if (day > 0 && day <= 31) {
+                        int colIndex = TABLE5_DATA_START_COL + (day - 1) * 3;
+                        setCellValue(sheet, finalProvinceRow, colIndex, getNumberValue(data, "da_xu_ly_3h"));
+                        setCellValue(sheet, finalProvinceRow, colIndex + 1, getNumberValue(data, "tong_sc_da_xu_ly"));
+                        Double tyLe = getNumberValue(data, "ty_le_3h");
+                        if (tyLe != null) {
+                            setCellValue(sheet, finalProvinceRow, colIndex + 2, tyLe / 100);
+                        }
+                    }
+                });
+
+                // Calculate and fill cumulative data for columns D, E, F
+                fillCumulativeDataTable5(sheet, finalProvinceRow, provinceData, progress3h);
+                log.debug("Filled handle rate data for province: {} with {} records", provinceName, provinceData.size());
+            }
+        }
+        // Handle TOTAL row
+        fillHandleRateTotalRow(sheet, dataByProvince, curDay, progress3h);
+    }
+
+    private void fillCumulativeDataTable5(Sheet sheet, int row, List<Map<String, Object>> provinceData, Double progress3h) {
+        if (provinceData == null || provinceData.isEmpty()) {
+            setCellValue(sheet, row, 3, 0.0);  // Lũy kế 3h
+            setCellValue(sheet, row, 4, 0.0);  // Tổng SC lũy kế
+            setCellValue(sheet, row, 5, 0.0);  // Tỷ lệ lũy kế
+            setCellValueString(sheet, row, 6, "N/A"); // Cột G KPI
+            return;
+        }
+
+        double cumulativeDaXuLy3h = 0.0;
+        double cumulativeTongSc = 0.0;
+
+        for (Map<String, Object> data : provinceData) {
+            cumulativeDaXuLy3h += getNumberValue(data, "da_xu_ly_3h") != null
+                    ? getNumberValue(data, "da_xu_ly_3h") : 0.0;
+            cumulativeTongSc += getNumberValue(data, "tong_sc_da_xu_ly") != null
+                    ? getNumberValue(data, "tong_sc_da_xu_ly") : 0.0;
+        }
+
+        double cumulativePercent = cumulativeTongSc > 0
+                ? (cumulativeDaXuLy3h / cumulativeTongSc)
+                : 0.0;
+
+        // Fill D, E, F
+        setCellValue(sheet, row, 3, cumulativeDaXuLy3h);
+        setCellValue(sheet, row, 4, cumulativeTongSc);
+        setCellValue(sheet, row, 5, cumulativePercent);
+
+        // Fill G (KPI đạt hay không)
+        if (progress3h != null) {
+            String kpiStatus = cumulativePercent >= progress3h ? "Đạt" : "Không đạt";
+            setCellValueString(sheet, row, 6, kpiStatus);
+        } else {
+            setCellValueString(sheet, row, 6, "N/A");
+        }
+    }
+
+    private void fillCumulativeDataTable6(Sheet sheet, int row, List<Map<String, Object>> provinceData, Double progress3h) {
+        if (provinceData == null || provinceData.isEmpty()) {
+            setCellValue(sheet, row, 3, 0.0);  // Lũy kế 3h
+            setCellValue(sheet, row, 4, 0.0);  // Tổng SC lũy kế
+            setCellValue(sheet, row, 5, 0.0);  // Tỷ lệ lũy kế
+            setCellValueString(sheet, row, 6, "N/A"); // Cột G KPI
+            return;
+        }
+
+        double cumulativeDaXuLy3h = 0.0;
+        double cumulativeTongSc = 0.0;
+
+        for (Map<String, Object> data : provinceData) {
+            cumulativeDaXuLy3h += getNumberValue(data, "da_xu_ly_24h") != null
+                    ? getNumberValue(data, "da_xu_ly_24h") : 0.0;
+            cumulativeTongSc += getNumberValue(data, "tong_sc_da_xu_ly") != null
+                    ? getNumberValue(data, "tong_sc_da_xu_ly") : 0.0;
+        }
+
+        double cumulativePercent = cumulativeTongSc > 0
+                ? (cumulativeDaXuLy3h / cumulativeTongSc)
+                : 0.0;
+
+        // Fill D, E, F
+        setCellValue(sheet, row, 3, cumulativeDaXuLy3h);
+        setCellValue(sheet, row, 4, cumulativeTongSc);
+        setCellValue(sheet, row, 5, cumulativePercent);
+
+        // Fill G (KPI đạt hay không)
+        if (progress3h != null) {
+            String kpiStatus = cumulativePercent >= progress3h ? "Đạt" : "Không đạt";
+            setCellValueString(sheet, row, 6, kpiStatus);
+        } else {
+            setCellValueString(sheet, row, 6, "N/A");
+        }
+    }
+
+
+    private void fillHandleRate24hByProvince(Sheet sheet, List<Map<String, Object>> handleRateData, Double progress24h, LocalDate currentDate) {
         if (handleRateData == null) handleRateData = List.of();
 
-        int currentDay = java.time.LocalDate.now().getDayOfMonth();
+        int currentDay = currentDate.getDayOfMonth();
 
         // Create optimized map once - group data by province
         Map<String, List<Map<String, Object>>> dataByProvince = handleRateData.stream()
@@ -884,11 +1086,10 @@ public class TransmissionChannelIncidentService {
         // Handle TOTAL row
         fillHandleRateTotalRowTable6(sheet, dataByProvince, currentDay, progress24h);
     }
-
-    private void fillHandleRate48hByProvince(Sheet sheet, List<Map<String, Object>> handleRateData, Double progress48h) {
+    private void fillHandleRate48hByProvince(Sheet sheet, List<Map<String, Object>> handleRateData, Double progress48h, LocalDate currentDate) {
         if (handleRateData == null) handleRateData = List.of();
 
-        int currentDay = java.time.LocalDate.now().getDayOfMonth();
+        int currentDay = currentDate.getDayOfMonth();
 
         // Create optimized map once - group data by province
         Map<String, List<Map<String, Object>>> dataByProvince = handleRateData.stream()
@@ -985,7 +1186,7 @@ public class TransmissionChannelIncidentService {
         }
     }
     private void fillHandleRateTotalRowTable7(Sheet sheet, Map<String, List<Map<String, Object>>> dataByProvince, int currentDay, Double progress3h) {
-        List<Map<String, Object>> totalData = dataByProvince.get(TOTAL);
+        List<Map<String, Object>> totalData = dataByProvince.get("Toàn quốc");
 
         // Initialize TOTAL row with default values for past days, null for future days
         for (int day = 1; day <= 31; day++) {
@@ -1035,11 +1236,10 @@ public class TransmissionChannelIncidentService {
             setCellValueString(sheet, TABLE7_TOTAL_ROW, 6, "N/A");
         }
     }
-
-    private void fillHandleRate3hVipByProvince(Sheet sheet, List<Map<String, Object>> handleRateData, Double progress3hVip) {
+    private void fillHandleRate3hVipByProvince(Sheet sheet, List<Map<String, Object>> handleRateData, Double progress3hVip, LocalDate currentDate) {
         if (handleRateData == null) handleRateData = List.of();
 
-        int currentDay = java.time.LocalDate.now().getDayOfMonth();
+        int currentDay = currentDate.getDayOfMonth();
 
         // Create optimized map once - group data by province
         Map<String, List<Map<String, Object>>> dataByProvince = handleRateData.stream()
@@ -1089,7 +1289,7 @@ public class TransmissionChannelIncidentService {
                     if (day > 0 && day <= 31) {
                         int colIndex = TABLE8_DATA_START_COL + (day - 1) * 3;
                         setCellValue(sheet, finalProvinceRow, colIndex, getNumberValue(data, "da_xu_ly_3h_vip"));
-                        setCellValue(sheet, finalProvinceRow, colIndex + 1, getNumberValue(data, "tong_sc_da_xu_ly_vip"));
+                        setCellValue(sheet, finalProvinceRow, colIndex + 1, getNumberValue(data, "tong_sc_da_xu_ly"));
                         Double tyLe = getNumberValue(data, "ty_le_3h_vip");
                         if (tyLe != null) {
                             setCellValue(sheet, finalProvinceRow, colIndex + 2, tyLe / 100);
@@ -1118,8 +1318,8 @@ public class TransmissionChannelIncidentService {
         double cumulativeTongSc = 0.0;
 
         for (Map<String, Object> data : provinceData) {
-            cumulativeDaXuLy3hVip += getNumberValue(data, "da_xu_ly_3hVip") != null
-                    ? getNumberValue(data, "da_xu_ly_3hVip") : 0.0;
+            cumulativeDaXuLy3hVip += getNumberValue(data, "da_xu_ly_3h_vip") != null
+                    ? getNumberValue(data, "da_xu_ly_3h_vip") : 0.0;
             cumulativeTongSc += getNumberValue(data, "tong_sc_da_xu_ly") != null
                     ? getNumberValue(data, "tong_sc_da_xu_ly") : 0.0;
         }
@@ -1142,7 +1342,7 @@ public class TransmissionChannelIncidentService {
         }
     }
     private void fillHandleRateTotalRowTable8(Sheet sheet, Map<String, List<Map<String, Object>>> dataByProvince, int currentDay, Double progress3h) {
-        List<Map<String, Object>> totalData = dataByProvince.get(TOTAL);
+        List<Map<String, Object>> totalData = dataByProvince.get("Toàn quốc");
 
         // Initialize TOTAL row with default values for past days, null for future days
         for (int day = 1; day <= 31; day++) {
@@ -1163,16 +1363,16 @@ public class TransmissionChannelIncidentService {
 
         if (totalData != null && !totalData.isEmpty()) {
             for (Map<String, Object> data : totalData) {
-                cumulativeDaXuLy48h += getNumberValue(data, "da_xu_ly_3hVip") != null ? getNumberValue(data, "da_xu_ly_3hVip") : 0.0;
+                cumulativeDaXuLy48h += getNumberValue(data, "da_xu_ly_3h_vip") != null ? getNumberValue(data, "da_xu_ly_3h_vip") : 0.0;
                 cumulativeTongSc += getNumberValue(data, "tong_sc_da_xu_ly") != null ? getNumberValue(data, "tong_sc_da_xu_ly") : 0.0;
             }
             for (Map<String, Object> data : totalData) {
                 int day = extractDayFromDate(data.get("ngay"));
                 if (day > 0 && day <= 31) {
                     int colIndex = TABLE7_DATA_START_COL + (day - 1) * 3;
-                    setCellValue(sheet, TABLE8_TOTAL_ROW, colIndex, getNumberValue(data, "da_xu_ly_3hVip"));
+                    setCellValue(sheet, TABLE8_TOTAL_ROW, colIndex, getNumberValue(data, "da_xu_ly_3h_vip"));
                     setCellValue(sheet, TABLE8_TOTAL_ROW, colIndex + 1, getNumberValue(data, "tong_sc_da_xu_ly"));
-                    Double tyLe = getNumberValue(data, "ty_le_3hVip");
+                    Double tyLe = getNumberValue(data, "da_xu_ly_3h_vip");
                     if (tyLe != null) setCellValue(sheet, TABLE8_TOTAL_ROW, colIndex + 2, tyLe / 100);
                 }
             }
@@ -1194,47 +1394,8 @@ public class TransmissionChannelIncidentService {
     }
 
     private int extractDayFromDate(Object dateObj) {
-        try {
-            if (dateObj instanceof java.sql.Date) {
-                return ((java.sql.Date) dateObj).toLocalDate().getDayOfMonth();
-            } else if (dateObj instanceof java.util.Date) {
-                return ((java.util.Date) dateObj).toInstant()
-                        .atZone(java.time.ZoneId.systemDefault())
-                        .toLocalDate()
-                        .getDayOfMonth();
-            } else if (dateObj instanceof java.time.LocalDate) {
-                return ((java.time.LocalDate) dateObj).getDayOfMonth();
-            }
-        } catch (Exception e) {
-            log.warn("Failed to extract day from date object: {}", dateObj, e);
-        }
-        return -1; // Invalid day
-    }
-
-    // Utility methods
-    private Optional<Map<String, Object>> findMatchingCategory(List<Map<String, Object>> dataList,
-                                                               String templateCategory, String categoryKey) {
-        return dataList.stream()
-                .filter(data -> {
-                    Object categoryObj = data.get(categoryKey);
-                    return categoryObj != null &&
-                            categoryObj.toString().trim().toLowerCase()
-                                    .contains(templateCategory.toLowerCase());
-                })
-                .findFirst();
-    }
-
-    private Optional<Map<String, Object>> findCategoryData(List<Map<String, Object>> dataList,
-                                                           String categoryValue, String categoryKey) {
-        if (dataList == null || dataList.isEmpty()) return Optional.empty();
-
-        return dataList.stream()
-                .filter(data -> {
-                    Object categoryObj = data.get(categoryKey);
-                    return categoryObj != null &&
-                            categoryValue.equalsIgnoreCase(categoryObj.toString().trim());
-                })
-                .findFirst();
+        LocalDate ld = extractLocalDate(dateObj);
+        return ld != null ? ld.getDayOfMonth() : -1;
     }
 
     private String getCellStringValue(Sheet sheet, int rowIndex, int colIndex) {
@@ -1247,17 +1408,39 @@ public class TransmissionChannelIncidentService {
         return cell.getStringCellValue().trim();
     }
 
-    private void setCellValue(Sheet sheet, int rowIndex, int colIndex, Number value) {
-        Row row = sheet.getRow(rowIndex);
-        if (row == null) row = sheet.createRow(rowIndex);
+    private void setCellValue(Row row, int colIndex, Object value) {
+        if (row == null) return;
 
         Cell cell = row.getCell(colIndex);
-        if (cell == null) cell = row.createCell(colIndex);
+        if (cell == null) {
+            cell = row.createCell(colIndex);
+        }
 
         if (value == null) {
             cell.setBlank();
+        } else if (value instanceof Number) {
+            cell.setCellValue(((Number) value).doubleValue());
         } else {
-            cell.setCellValue(value.doubleValue());
+            cell.setCellValue(value.toString());
+        }
+    }
+    private void setCellValue(Sheet sheet, int rowIndex, int colIndex, Object value) {
+        Row row = sheet.getRow(rowIndex);
+        if (row == null) {
+            row = sheet.createRow(rowIndex);
+        }
+
+        Cell cell = row.getCell(colIndex);
+        if (cell == null) {
+            cell = row.createCell(colIndex);
+        }
+
+        if (value == null) {
+            cell.setBlank();
+        } else if (value instanceof Number) {
+            cell.setCellValue(((Number) value).doubleValue());
+        } else {
+            cell.setCellValue(value.toString());
         }
     }
     private void setCellValueString(Sheet sheet, int rowIndex, int colIndex, String value) {
@@ -1273,7 +1456,6 @@ public class TransmissionChannelIncidentService {
             cell.setCellValue(value);
         }
     }
-
     private void setCellValueTable5(Sheet sheet, String value) {
         Row r = sheet.getRow(TransmissionChannelIncidentService.TABLE5_KPI_ROW);
         if (r == null) r = sheet.createRow(TransmissionChannelIncidentService.TABLE5_KPI_ROW);
@@ -1316,115 +1498,113 @@ public class TransmissionChannelIncidentService {
         return value instanceof Number ? ((Number) value).doubleValue() : null;
     }
 
-    public BufferedImage exportChartToImage(String inputPath, String sheetName) throws Exception {
-        Workbook wbInput = new Workbook();
-        wbInput.loadFromFile(inputPath);
-        Worksheet sheetInput = wbInput.getWorksheets().get(sheetName);
-
-        Chart chart = null;
-        for (int i = 0; i < sheetInput.getCharts().size(); i++) {
-            Chart c = sheetInput.getCharts().get(i);
-            // Ví dụ tìm chart trong vùng F10:Q25
-            if (c.getLeftColumn() >= 6 && c.getRightColumn() <= 17
-                    && c.getTopRow() >= 10 && c.getBottomRow() <= 25) {
-                chart = c;
-                break;
-            }
-        }
-        if (chart == null) throw new RuntimeException("Không tìm thấy chart trong block F10:Q25");
-
-        return chart.saveToImage();
-    }
-
-    public void insertChartImage(XSSFWorkbook workbook, String sheetName, BufferedImage chartImage) throws Exception {
-        XSSFSheet sheet = workbook.getSheet(sheetName);
-        if (sheet == null) throw new RuntimeException("Không tìm thấy sheet " + sheetName);
-
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        ImageIO.write(chartImage, "png", baos);
-        int pictureIdx = workbook.addPicture(baos.toByteArray(), org.apache.poi.ss.usermodel.Workbook.PICTURE_TYPE_PNG);
-
-        CreationHelper helper = workbook.getCreationHelper();
-        Drawing<?> drawing = sheet.createDrawingPatriarch();
-        ClientAnchor anchor = helper.createClientAnchor();
-        anchor.setCol1(12); // M
-        anchor.setRow1(13); // 14
-
-        drawing.createPicture(anchor, pictureIdx).resize();
-    }
-
-    private String extractResourceToTemp(String resourcePath) throws Exception {
-        try (var in = getClass().getResourceAsStream(resourcePath)) {
-            if (in == null) throw new RuntimeException("Không tìm thấy resource: " + resourcePath);
-            var tempFile = java.io.File.createTempFile("excel_template_", ".xlsx");
-            tempFile.deleteOnExit();
-            try (var out = new java.io.FileOutputStream(tempFile)) {
-                in.transferTo(out);
-            }
-            return tempFile.getAbsolutePath();
-        }
-    }
-
-    private void fillSheet2KpiData(Sheet sheet2, ExcelDTO data) {
+    private void fillSheet2KpiData(Sheet sheet2, TransmissionChanelDTO data, LocalDate currentDate) {
         if (sheet2 == null) {
             log.warn("Sheet 2 (KPI VTS) not found, skipping KPI data population");
             return;
         }
 
-        int currentDay = LocalDate.now().getDayOfMonth();
+        int currentDay = currentDate.getDayOfMonth();
 
-        // Get KPI progress data
-        List<Map<String, Object>> progressKpi = data.getProgressKpi();
+        // Initialize KPI values
         Double progress3h = null;
         Double progress24h = null;
         Double progress48h = null;
         Double satisfyLevel = null;
 
-        if (progressKpi != null && !progressKpi.isEmpty()) {
-            Map<String, Object> kpiData = progressKpi.get(0);
-            progress3h = getNumberValue(kpiData, "progress_3h");
-            progress24h = getNumberValue(kpiData, "progress_24h");
-            progress48h = getNumberValue(kpiData, "progress_48h");
-            satisfyLevel = getNumberValue(kpiData, "satisfyLevel");
+        // Get KPI progress data and extract each KPI type
+        if (data.getOnTimeHandle() != null && !data.getOnTimeHandle().isEmpty()) {
 
-            // Convert from percentage to decimal if needed
-            if (progress3h != null) progress3h = progress3h / 100;
-            if (progress24h != null) progress24h = progress24h / 100;
-            if (progress48h != null) progress48h = progress48h / 100;
-            if (satisfyLevel != null) satisfyLevel = satisfyLevel / 100;
+            // Extract 3H KPI
+            Optional<Map<String, Object>> kpi3h = data.getOnTimeHandle().stream()
+                    .filter(row -> {
+                        Object incidentName = row.get("incidentName");
+                        return incidentName != null && incidentName.toString().equals("Tỉ lệ sự cố xử lý trong 3h");
+                    })
+                    .findFirst();
+
+            if (kpi3h.isPresent()) {
+                Double val = getNumberValue(kpi3h.get(), "kpi_progress");
+                if (val != null) {
+                    progress3h = val / 100; // Convert percentage to decimal
+                }
+            }
+
+            // Extract 24H KPI
+            Optional<Map<String, Object>> kpi24h = data.getOnTimeHandle().stream()
+                    .filter(row -> {
+                        Object incidentName = row.get("incidentName");
+                        return incidentName != null && incidentName.toString().equals("Tỉ lệ sự cố xử lý trong 24h");
+                    })
+                    .findFirst();
+
+            if (kpi24h.isPresent()) {
+                Double val = getNumberValue(kpi24h.get(), "kpi_progress");
+                if (val != null) {
+                    progress24h = val / 100; // Convert percentage to decimal
+                }
+            }
+
+            // Extract 48H KPI
+            Optional<Map<String, Object>> kpi48h = data.getOnTimeHandle().stream()
+                    .filter(row -> {
+                        Object incidentName = row.get("incidentName");
+                        return incidentName != null && incidentName.toString().equals("Tỉ lệ sự cố xử lý trong 48h");
+                    })
+                    .findFirst();
+
+            if (kpi48h.isPresent()) {
+                Double val = getNumberValue(kpi48h.get(), "kpi_progress");
+                if (val != null) {
+                    progress48h = val / 100; // Convert percentage to decimal
+                }
+            }
+
+            // Extract Satisfaction Level KPI (nếu có tên khác, cần điều chỉnh)
+            Optional<Map<String, Object>> kpiSatisfy = data.getOnTimeHandle().stream()
+                    .filter(row -> {
+                        Object incidentName = row.get("incidentName");
+                        return incidentName != null &&
+                                (incidentName.toString().contains("Mức độ hài lòng"));
+                    })
+                    .findFirst();
+
+            if (kpiSatisfy.isPresent()) {
+                Double val = getNumberValue(kpiSatisfy.get(), "kpi_progress");
+                if (val != null) {
+                    satisfyLevel = val / 100; // Convert percentage to decimal
+                }
+            }
         }
 
         // Fill KPI 3H section (rows C5, C7, C8)
-        fillSheet2KpiRow(sheet2, SHEET2_KPI_3H_ROW, progress3h, currentDay, "3H KPI");
-        fillSheet2ActualDataRow(sheet2, SHEET2_3H_DA_XU_LI_ROW, data.getHandleRate3h(), "da_xu_ly_3h", currentDay, "3H Đã xử lý");
-        fillSheet2ActualDataRow(sheet2, SHEET2_3H_TONG_SC_ROW, data.getHandleRate3h(), "tong_sc_da_xu_ly", currentDay, "3H Tổng SC");
+        fillSheet2KpiRow(sheet2, SHEET2_KPI_3H_ROW, progress3h, currentDay, "Tỉ lệ sự cố xử lý trong 3h");
+        fillSheet2ActualDataRow(sheet2, SHEET2_3H_DA_XU_LI_ROW, data.getHandleRate3h(), "da_xu_ly_3h", currentDate);
+        fillSheet2ActualDataRow(sheet2, SHEET2_3H_TONG_SC_ROW, data.getHandleRate3h(), "tong_sc_da_xu_ly", currentDate);
 
         // Fill KPI 24H section (rows C11, C13, C14)
-        fillSheet2KpiRow(sheet2, SHEET2_KPI_24H_ROW, progress24h, currentDay, "24H KPI");
-        fillSheet2ActualDataRow(sheet2, SHEET2_24H_DA_XU_LI_ROW, data.getHandleRate24h(), "da_xu_ly_24h", currentDay, "24H Đã xử lý");
-        fillSheet2ActualDataRow(sheet2, SHEET2_24H_TONG_SC_ROW, data.getHandleRate24h(), "tong_sc_da_xu_ly", currentDay, "24H Tổng SC");
+        fillSheet2KpiRow(sheet2, SHEET2_KPI_24H_ROW, progress24h, currentDay, "Tỉ lệ sự cố xử lý trong 24h");
+        fillSheet2ActualDataRow(sheet2, SHEET2_24H_DA_XU_LI_ROW, data.getHandleRate24h(), "da_xu_ly_24h", currentDate);
+        fillSheet2ActualDataRow(sheet2, SHEET2_24H_TONG_SC_ROW, data.getHandleRate24h(), "tong_sc_da_xu_ly", currentDate);
 
         // Fill KPI 48H section (rows C17, C19, C20)
-        fillSheet2KpiRow(sheet2, SHEET2_KPI_48H_ROW, progress48h, currentDay, "48H KPI");
-        fillSheet2ActualDataRow(sheet2, SHEET2_48H_DA_XU_LI_ROW, data.getHandleRate48h(), "da_xu_ly_48h", currentDay, "48H Đã xử lý");
-        fillSheet2ActualDataRow(sheet2, SHEET2_48H_TONG_SC_ROW, data.getHandleRate48h(), "tong_sc_da_xu_ly", currentDay, "48H Tổng SC");
-        fillSheet2KpiRow(sheet2, SHEET2_KPI_SATISFY_ROW, satisfyLevel, currentDay, "Satisfaction Level KPI");
+        fillSheet2KpiRow(sheet2, SHEET2_KPI_48H_ROW, progress48h, currentDay, "Tỉ lệ sự cố xử lý trong 48h");
+        fillSheet2ActualDataRow(sheet2, SHEET2_48H_DA_XU_LI_ROW, data.getHandleRate48h(), "da_xu_ly_48h", currentDate);
+        fillSheet2ActualDataRow(sheet2, SHEET2_48H_TONG_SC_ROW, data.getHandleRate48h(), "tong_sc_da_xu_ly", currentDate);
+        fillSheet2KpiRow(sheet2, SHEET2_KPI_SATISFY_ROW, satisfyLevel, currentDay, "Mức độ hài lòng");
 
-        log.debug("Filled Sheet 2 complete data - 3H KPI: {}, 24H KPI: {}, 48H KPI: {}", progress3h, progress24h, progress48h);
     }
-
     private void fillSheet2KpiRow(Sheet sheet, int rowIndex, Double kpiValue, int currentDay, String kpiType) {
         if (kpiValue == null) {
             log.warn("KPI value is null for {}, skipping row {}", kpiType, rowIndex + 1);
             return;
         }
 
-        // Fill KPI value for each day from C to AK (columns 2 to 36, representing days 1-35)
         for (int day = 1; day <= 35; day++) {
-            int colIndex = SHEET2_DATA_START_COL + (day - 1); // C=2, D=3, ..., AK=36
+            int colIndex = SHEET2_DATA_START_COL - 1 + day ; // C=2, D=3, ..., AK=36 (KPI starts from column C)
 
-            // Only fill data for past and current days, leave future days empty
-            if (day <= currentDay) {
+            // Fill KPI up to day + 1 (include the next day), leave further days empty
+            if (day <= currentDay + 1) {
                 setCellValue(sheet, rowIndex, colIndex, kpiValue);
             } else {
                 setCellValue(sheet, rowIndex, colIndex, null);
@@ -1435,47 +1615,63 @@ public class TransmissionChannelIncidentService {
     }
 
     private void fillSheet2ActualDataRow(Sheet sheet, int rowIndex, List<Map<String, Object>> handleRateData,
-                                         String dataKey, int currentDay, String dataType) {
+                                         String dataKey, LocalDate currentDate) {
         if (sheet == null) return;
 
         Row row = sheet.getRow(rowIndex);
         if (row == null) row = sheet.createRow(rowIndex);
 
         Map<String, List<Map<String, Object>>> dataByProvince = handleRateData != null
-                ? handleRateData.stream().collect(Collectors.groupingBy(
+                ? handleRateData.stream().filter(Objects::nonNull).collect(Collectors.groupingBy(
                 d -> d.get("tinh") != null ? d.get("tinh").toString().trim() : "unknown"
         ))
                 : Map.of();
 
-        List<Map<String, Object>> totalData = dataByProvince.getOrDefault(TOTAL, List.of());
+        List<Map<String, Object>> totalData = dataByProvince.getOrDefault("Toàn quốc", List.of());
 
-        Map<Integer, Double> valueByDay = new HashMap<>();
-        for (Map<String, Object> data : totalData) {
-            int day = extractDayFromDate(data.get("ngay"));
-            Double value = getNumberValue(data, dataKey);
-            if (day > 0 && day <= 35) {
-                valueByDay.put(day, value);
-            }
-        }
+        Map<LocalDate, Map<String, Object>> dataByDate = totalData.stream()
+                .filter(Objects::nonNull)
+                .collect(Collectors.toMap(
+                        d -> {
+                            Object ngay = d.get("ngay");
+                            LocalDate parsed = extractLocalDate(ngay);
+                            return parsed; // may be null
+                        },
+                        d -> d,
+                        (existing, replacement) -> replacement,
+                        LinkedHashMap::new
+                ));
+        // Remove any null keys caused by invalid/null dates
+        dataByDate.remove(null);
+
+        // Use the current date from the parameter
+        LocalDate baseDate = currentDate;
+        int currentDay = currentDate.getDayOfMonth();
 
         for (int day = 1; day <= 35; day++) {
-            int colIndex = SHEET2_DATA_START_COL + 1 + (day - 1); // C=2, D=3, ..., AK=36
+            int colIndex = SHEET2_DATA_START_COL + day; // D=3, E=4, ..., AL=37 (data starts from column D)
 
             Cell cell = row.getCell(colIndex);
             if (cell == null) cell = row.createCell(colIndex);
 
             if (day <= currentDay) {
-                Double value = valueByDay.get(day);
-                cell.setCellValue(value != null ? value : 0.0);
+                LocalDate date = baseDate.withDayOfMonth(day); // trực tiếp LocalDate
+                Map<String, Object> data = dataByDate.get(date);
+                
+                Double value = 0.0;
+                if (data != null) {
+                    value = getNumberValue(data, dataKey);
+                    if (value == null) value = 0.0;
+                }
+                
+                cell.setCellValue(value);
             } else {
                 cell.setBlank();
             }
         }
-
-        log.debug("Filled {} row {} with {} records", dataType, rowIndex + 1, totalData.size());
     }
 
-    private void fillSatisfactionLevel(Sheet sheet, ExcelDTO excelData) {
+    private void fillSatisfactionLevel(Sheet sheet, TransmissionChanelDTO excelData, LocalDate currentDate) {
         List<Map<String, Object>> satisfactionData = excelData.getSatisfactionLevel();
         if (satisfactionData == null) satisfactionData = List.of();
 
@@ -1487,58 +1683,47 @@ public class TransmissionChannelIncidentService {
 
         int startCol = 3; // Column D
 
-        // Group data by date
-        Map<String, Map<String, Object>> dataByDate = satisfactionData.stream()
+        // Group data by date using LocalDate, ignoring null/invalid dates
+        Map<LocalDate, Map<String, Object>> dataByDate = satisfactionData.stream()
+                .filter(Objects::nonNull)
                 .collect(Collectors.toMap(
-                        r -> r.get("Ngày").toString(),
-                        r -> r
+                        r -> extractLocalDate(r.get("ngay")),
+                        r -> r,
+                        (a, b) -> b,
+                        LinkedHashMap::new
                 ));
+        dataByDate.remove(null);
 
-        LocalDate firstDayPrevMonth = LocalDate.now().minusMonths(1).withDayOfMonth(1);
-        int daysInMonth = firstDayPrevMonth.lengthOfMonth();
-        int currentDay = LocalDate.now().getDayOfMonth();
+        int currentDay = currentDate.getDayOfMonth();
 
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
-
-        for (int day = 1; day <= daysInMonth; day++) {
+        for (int day = 1; day <= currentDay; day++) {
             int colIndex = startCol + (day - 1);
 
-            String dateStr = firstDayPrevMonth.withDayOfMonth(day).format(formatter);
-            Map<String, Object> record = dataByDate.get(dateStr);
+            LocalDate dayDate = currentDate.withDayOfMonth(day);
+            Map<String, Object> record = dataByDate.get(dayDate);
 
             Double numerator = null;
             Double denominator = null;
 
             if (record != null) {
-                Object numObj = record.get("Tử số - KH hài lòng");
-                Object denObj = record.get("Mẫu số - Tổng KH có phản hồi");
+                Object numObj = record.get("tu_so_hai_long");
+                Object denObj = record.get("mau_so_phan_hoi");
 
                 if (numObj instanceof Number) numerator = ((Number) numObj).doubleValue();
                 if (denObj instanceof Number) denominator = ((Number) denObj).doubleValue();
             }
 
-            // Nếu ngày <= ngày hiện tại thì fill dữ liệu, ngược lại để trống
-            if (day <= currentDay) {
-                Cell numeratorCell = numeratorRow.getCell(colIndex);
-                if (numeratorCell == null) numeratorCell = numeratorRow.createCell(colIndex);
-                numeratorCell.setCellValue(numerator != null ? numerator : 0);
+            Cell numeratorCell = numeratorRow.getCell(colIndex);
+            if (numeratorCell == null) numeratorCell = numeratorRow.createCell(colIndex);
+            numeratorCell.setCellValue(numerator != null ? numerator : 0);
 
-                Cell denominatorCell = denominatorRow.getCell(colIndex);
-                if (denominatorCell == null) denominatorCell = denominatorRow.createCell(colIndex);
-                denominatorCell.setCellValue(denominator != null ? denominator : 0);
-            } else {
-                Cell numeratorCell = numeratorRow.getCell(colIndex);
-                if (numeratorCell == null) numeratorCell = numeratorRow.createCell(colIndex);
-                numeratorCell.setBlank();
-
-                Cell denominatorCell = denominatorRow.getCell(colIndex);
-                if (denominatorCell == null) denominatorCell = denominatorRow.createCell(colIndex);
-                denominatorCell.setBlank();
-            }
+            Cell denominatorCell = denominatorRow.getCell(colIndex);
+            if (denominatorCell == null) denominatorCell = denominatorRow.createCell(colIndex);
+            denominatorCell.setCellValue(denominator != null ? denominator : 0);
         }
     }
 
-    private void fillAvgHandleTime(Sheet sheet, ExcelDTO excelData) {
+    private void fillAvgHandleTime(Sheet sheet, TransmissionChanelDTO excelData, LocalDate currentDate) {
         List<Map<String, Object>> avgHandleTimeData = excelData.getAvgTimeHandle();
         if (avgHandleTimeData == null) avgHandleTimeData = List.of();
 
@@ -1551,57 +1736,316 @@ public class TransmissionChannelIncidentService {
 
         int startCol = 3; // D là cột số 3 (0-based index)
 
-        // Map dữ liệu theo ngày để lookup
-        Map<String, Map<String, Object>> dataByDate = avgHandleTimeData.stream()
+        // Map dữ liệu theo ngày để lookup using LocalDate, ignoring null/invalid dates
+        Map<LocalDate, Map<String, Object>> dataByDate = avgHandleTimeData.stream()
+                .filter(Objects::nonNull)
                 .collect(Collectors.toMap(
-                        r -> r.get("Ngày").toString(),
-                        r -> r
+                        r -> extractLocalDate(r.get("ngay")),
+                        r -> r,
+                        (a, b) -> b,
+                        LinkedHashMap::new
                 ));
+        dataByDate.remove(null);
 
-        LocalDate today = LocalDate.now();
-        LocalDate firstDayPrevMonth = today.minusMonths(1).withDayOfMonth(1);
-        int daysInMonth = firstDayPrevMonth.lengthOfMonth();
-
-        int currentDay = today.getDayOfMonth();
-
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
-
-        for (int day = 1; day <= daysInMonth; day++) {
+        int currentDay = currentDate.getDayOfMonth();
+        for (int day = 1; day <= currentDay; day++) {
             int colIndex = startCol + (day - 1);
+            LocalDate dayDate = currentDate.withDayOfMonth(day);
+            Map<String, Object> record = dataByDate.get(dayDate);
 
-            if (day <= currentDay) {
-                String dateStr = firstDayPrevMonth.withDayOfMonth(day).format(formatter);
-                Map<String, Object> record = dataByDate.get(dateStr);
+            double totalHours = 0;
+            double totalCount = 0;
 
-                double totalHours = 0;
-                double totalCount = 0;
+            if (record != null) {
+                Object hoursObj = record.get("tong_thoi_gian_xu_ly");
+                Object countObj = record.get("so_luong_phan_anh");
 
-                if (record != null) {
-                    Object hoursObj = record.get("Tổng thời gian xử lý (giờ)");
-                    Object countObj = record.get("Số lượng phản ánh");
+                if (hoursObj instanceof Number) totalHours = ((Number) hoursObj).doubleValue();
+                if (countObj instanceof Number) totalCount = ((Number) countObj).doubleValue();
+            }
 
-                    if (hoursObj instanceof Number) totalHours = ((Number) hoursObj).doubleValue();
-                    if (countObj instanceof Number) totalCount = ((Number) countObj).doubleValue();
-                }
+            // Fill total processing hours
+            Cell totalHoursCell = totalTimeRow.getCell(colIndex);
+            if (totalHoursCell == null) totalHoursCell = totalTimeRow.createCell(colIndex);
+            totalHoursCell.setCellValue(totalHours);
 
-                // Fill total processing hours
-                Cell totalHoursCell = totalTimeRow.getCell(colIndex);
-                if (totalHoursCell == null) totalHoursCell = totalTimeRow.createCell(colIndex);
-                totalHoursCell.setCellValue(totalHours);
+            // Fill total count
+            Cell totalCountCell = totalCountRow.getCell(colIndex);
+            if (totalCountCell == null) totalCountCell = totalCountRow.createCell(colIndex);
+            totalCountCell.setCellValue(totalCount);
 
-                // Fill total count
-                Cell totalCountCell = totalCountRow.getCell(colIndex);
-                if (totalCountCell == null) totalCountCell = totalCountRow.createCell(colIndex);
-                totalCountCell.setCellValue(totalCount);
+        }
+    }
+
+    private void fillTable3Header(Sheet sheet, LocalDate currentDate) {
+        Row headerRow = sheet.getRow(30); // Row 31 in Excel (0-based index)
+        if (headerRow == null) headerRow = sheet.createRow(30);
+
+        // Get current month and year
+        int currentMonth = currentDate.getMonthValue();
+        int currentYear = currentDate.getYear();
+        
+        // Format month name in Vietnamese
+        String monthName = getVietnameseMonthName(currentMonth);
+        
+        // Column C (index 2): "Lũy kế T7.2025"
+        Cell cellC = headerRow.getCell(2);
+        if (cellC == null) cellC = headerRow.createCell(2);
+        cellC.setCellValue("Lũy kế " + monthName + "." + currentYear);
+        
+        // Column D (index 3): "TB ngày T7.2025"
+        Cell cellD = headerRow.getCell(3);
+        if (cellD == null) cellD = headerRow.createCell(3);
+        cellD.setCellValue("TB ngày " + monthName + "." + currentYear);
+        
+        // Column E (index 4): Use common function
+        fillTableHeader(sheet, currentDate, 30, 4);
+    }
+
+    private String getVietnameseMonthName(int month) {
+        String[] monthNames = {
+            "", "T1", "T2", "T3", "T4", "T5", "T6",
+            "T7", "T8", "T9", "T10", "T11", "T12"
+        };
+        return monthNames[month];
+    }
+
+    private void fillTable4Header(Sheet sheet, LocalDate currentDate) {
+        fillTableHeader(sheet, currentDate, 41, 6); // Row 42, Column G
+    }
+
+    private void fillG41Date(Sheet sheet, LocalDate currentDate) {
+        Row row = sheet.getRow(40); // Row 41 (0-based index)
+        if (row == null) row = sheet.createRow(40);
+
+        Cell cell = row.getCell(6); // Column G (0-based index)
+        if (cell == null) cell = row.createCell(6);
+
+        // Hiển thị chỉ số ngày
+        int currentDay = currentDate.getDayOfMonth();
+        cell.setCellValue(currentDay);
+    }
+
+    private void fillTable5Header(Sheet sheet, LocalDate currentDate) {
+        fillTableHeader(sheet, currentDate, 81, 7); // Row 82, Column H
+    }
+
+    private void fillTable6Header(Sheet sheet, LocalDate currentDate) {
+        fillTableHeader(sheet, currentDate, 121, 7); // Row 122, Column H
+    }
+
+    private void fillTable7Header(Sheet sheet, LocalDate currentDate) {
+        fillTableHeader(sheet, currentDate, 161, 7); // Row 162, Column H
+    }
+
+    private void fillTable8Header(Sheet sheet, LocalDate currentDate) {
+        fillTableHeader(sheet, currentDate, 201, 7); // Row 202, Column H
+    }
+
+    private void fillTableHeader(Sheet sheet, LocalDate currentDate, int rowIndex, int colIndex) {
+        Row headerRow = sheet.getRow(rowIndex);
+        if (headerRow == null) headerRow = sheet.createRow(rowIndex);
+
+        // Get current month and year
+        int currentMonth = currentDate.getMonthValue();
+        int currentYear = currentDate.getYear();
+        
+        // Fill cell with "tháng/1/năm" format
+        Cell cell = headerRow.getCell(colIndex);
+        if (cell == null) cell = headerRow.createCell(colIndex);
+        String firstDayOfMonth = currentMonth + "/1/" + currentYear;
+        cell.setCellValue(firstDayOfMonth);
+    }
+
+    private void fillMonthlySummaryData(Sheet sheet, TransmissionChanelDTO data, LocalDate currentDate) {
+        // Fill T1 to T12 data (D342 to O344) from getIncidentMonthlySummary
+        fillMonthlySummaryT1ToT12(sheet, data.getIncidentMonthlySummary());
+        
+        // Fill 8 days data (P342 to W344) from getLast8daysAndAvgMonth
+        fillLast8DaysData(sheet, data.getLast8daysAndAvgMonth(), currentDate);
+    }
+
+    private void fillMonthlySummaryT1ToT12(Sheet sheet, List<Map<String, Object>> monthlySummaryData) {
+        if (monthlySummaryData == null || monthlySummaryData.isEmpty()) return;
+
+        // T1 to T12 columns: D342 to O344 (columns 3 to 14, 0-based)
+        int startCol = 3; // Column D
+        int startRow = 341; // Row 342 (0-based)
+        
+        for (Map<String, Object> rowData : monthlySummaryData) {
+            String type = (String) rowData.get("type");
+            int rowIndex = startRow;
+            
+            // Determine which row to fill based on type
+            if ("Sự cố".equals(type)) {
+                rowIndex = startRow + 1; // Row 343
+            } else if ("TLPA/1000TB".equals(type)) {
+                rowIndex = startRow + 2; // Row 344
             } else {
-                // Clear cell nếu ngày > ngày hiện tại
-                Cell totalHoursCell = totalTimeRow.getCell(colIndex);
-                if (totalHoursCell != null) totalHoursCell.setBlank();
-
-                Cell totalCountCell = totalCountRow.getCell(colIndex);
-                if (totalCountCell != null) totalCountCell.setBlank();
+                continue; // Skip unknown types
+            }
+            
+            // Fill T1 to T12 data
+            for (int month = 1; month <= 12; month++) {
+                String columnKey = "T" + month;
+                Object value = rowData.get(columnKey);
+                if (value instanceof Number) {
+                    setCellValue(sheet, rowIndex, startCol + month - 1, ((Number) value).doubleValue());
+                }
             }
         }
+    }
+
+    private void fillLast8DaysData(Sheet sheet, List<Map<String, Object>> last8DaysData, LocalDate currentDate) {
+        if (last8DaysData == null || last8DaysData.isEmpty()) return;
+
+        // D342 to O344 (columns 3 to 14, 0-based) for months 1-12
+        int monthlyStartCol = 3; // Column D
+        // P342 to W344 (columns 15 to 22, 0-based) for 8 days
+        int dailyStartCol = 15; // Column P
+        int headerRow = 341; // Row 342 (0-based) - for headers
+        int suCoRow = 342; // Row 343 (0-based) - for "Sự cố" data
+        int tlpaRow = 343; // Row 344 (0-based) - for "TLPA/1000TB" data
+
+        // Get data for current month only (for cumulative values)
+        List<Map<String, Object>> currentMonthData = last8DaysData.stream()
+                .filter(data -> {
+                    Object dayObj = data.get("day");
+                    if (dayObj == null) return false;
+                    
+                    LocalDate dataDate = extractLocalDate(dayObj);
+                    if (dataDate == null) return false;
+                    
+                    return dataDate.getMonthValue() == currentDate.getMonthValue() && 
+                           dataDate.getYear() == currentDate.getYear();
+                })
+                .sorted((a, b) -> {
+                    Object dayA = a.get("day");
+                    Object dayB = b.get("day");
+                    if (dayA == null || dayB == null) return 0;
+                    
+                    LocalDate dateA = extractLocalDate(dayA);
+                    LocalDate dateB = extractLocalDate(dayB);
+                    if (dateA == null || dateB == null) return 0;
+                    
+                    return dateA.compareTo(dateB);
+                })
+                .collect(Collectors.toList());
+
+        // Get the last 8 days of data, sorted by day
+        List<Map<String, Object>> sortedData = last8DaysData.stream()
+                .sorted((a, b) -> {
+                    Object dayA = a.get("day");
+                    Object dayB = b.get("day");
+                    if (dayA == null || dayB == null) return 0;
+
+                    LocalDate dateA = extractLocalDate(dayA);
+                    LocalDate dateB = extractLocalDate(dayB);
+                    if (dateA == null || dateB == null) return 0;
+
+                    return dateA.compareTo(dateB);
+                })
+                .collect(Collectors.toList());
+
+        // Fill headers (months) in row 342
+        Row headerRowObj = sheet.getRow(headerRow);
+        if (headerRowObj == null) headerRowObj = sheet.createRow(headerRow);
+
+        // Fill "Sự cố" data in row 343
+        Row suCoRowObj = sheet.getRow(suCoRow);
+        if (suCoRowObj == null) suCoRowObj = sheet.createRow(suCoRow);
+
+        // Fill "TLPA/1000TB" data in row 344
+        Row tlpaRowObj = sheet.getRow(tlpaRow);
+        if (tlpaRowObj == null) tlpaRowObj = sheet.createRow(tlpaRow);
+
+        // Fill T1 to T12 headers (columns D to O)
+        String[] monthHeaders = {"T1", "T2", "T3", "T4", "T5", "T6", "T7", "T8", "T9", "T10", "T11", "T12"};
+        for (int monthIndex = 0; monthIndex < 12; monthIndex++) {
+            int colIndex = monthlyStartCol + monthIndex;
+            setCellValue(sheet, headerRow, colIndex, monthHeaders[monthIndex]);
+        }
+
+        // Fill cumulative data for current month (D-O)
+        if (!currentMonthData.isEmpty()) {
+            // Get the latest cumulative data for the current month
+            Map<String, Object> latestData = currentMonthData.get(currentMonthData.size() - 1);
+            int currentMonthCol = currentDate.getMonthValue() - 1; // Convert to 0-based index
+            int colIndex = monthlyStartCol + currentMonthCol;
+            
+            // Fill "Sự cố" data (Row 343) with luyKeTotalPerDayParent
+            Object luyKeTotalPerDayParent = latestData.get("luyKeTotalPerDayParent");
+            if (luyKeTotalPerDayParent instanceof Number) {
+                setCellValue(sheet, suCoRow, colIndex, ((Number) luyKeTotalPerDayParent).doubleValue());
+            }
+            
+            // Fill "TLPA/1000TB" data (Row 344) with tlpaParentLuyKe
+            Object tlpaParentLuyKe = latestData.get("tlpaParentLuyKe");
+            if (tlpaParentLuyKe instanceof Number) {
+                setCellValue(sheet, tlpaRow, colIndex, ((Number) tlpaParentLuyKe).doubleValue());
+            }
+        }
+
+        // Generate dynamic headers for last 8 days from currentDate (W back to P)
+        // W = currentDate, V = currentDate-1, ..., P = currentDate-7
+        for (int offset = 0; offset < 8; offset++) {
+            LocalDate headerDate = currentDate.minusDays(offset);
+            int colIndex = dailyStartCol + (7 - offset);
+
+            String dateStr = String.format("%02d/%02d", headerDate.getDayOfMonth(), headerDate.getMonthValue());
+            setCellValue(sheet, headerRow, colIndex, dateStr);
+        }
+
+        // Fill data for available days (W back to P)
+        int n = Math.min(8, sortedData.size());
+        for (int i = 0; i < n; i++) {
+            Map<String, Object> dayData = sortedData.get(sortedData.size() - 1 - i); // latest first
+            int colIndex = dailyStartCol + (7 - i);
+
+            Object totalPerDay = dayData.get("totalPerDayParent");
+            if (totalPerDay instanceof Number) {
+                setCellValue(sheet, suCoRow, colIndex, ((Number) totalPerDay).doubleValue());
+            }
+
+            Object tlpaParent = dayData.get("tlpaParent");
+            if (tlpaParent instanceof Number) {
+                setCellValue(sheet, tlpaRow, colIndex, ((Number) tlpaParent).doubleValue());
+            }
+        }
+    }
+
+    private LocalDate extractLocalDate(Object dateObj) {
+        try {
+            if (dateObj == null) return null;
+            if (dateObj instanceof java.sql.Date) {
+                return ((java.sql.Date) dateObj).toLocalDate();
+            } else if (dateObj instanceof java.util.Date) {
+                return ((java.util.Date) dateObj).toInstant()
+                        .atZone(java.time.ZoneId.systemDefault())
+                        .toLocalDate();
+            } else if (dateObj instanceof java.time.LocalDate) {
+                return (java.time.LocalDate) dateObj;
+            } else if (dateObj instanceof CharSequence) {
+                String raw = dateObj.toString().trim();
+                if (raw.isEmpty()) return null;
+                // Try common formats: yyyy-MM-dd, dd/MM/yyyy, yyyy/MM/dd
+                DateTimeFormatter[] fmts = new DateTimeFormatter[] {
+                        DateTimeFormatter.ISO_LOCAL_DATE,
+                        DateTimeFormatter.ofPattern("dd/MM/yyyy"),
+                        DateTimeFormatter.ofPattern("yyyy/MM/dd")
+                };
+                for (DateTimeFormatter f : fmts) {
+                    try { return LocalDate.parse(raw, f); } catch (Exception ignore) {}
+                }
+                // Fallback: replace '-' with '/' and try dd/MM/yyyy if it looks like dd-MM-yyyy
+                if (raw.matches("\\d{2}-\\d{2}-\\d{4}")) {
+                    try { return LocalDate.parse(raw.replace('-', '/'), DateTimeFormatter.ofPattern("dd/MM/yyyy")); } catch (Exception ignore) {}
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to extract LocalDate from object: {}", dateObj, e);
+        }
+        return null;
     }
 
 }
